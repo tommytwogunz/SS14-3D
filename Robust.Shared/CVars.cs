@@ -1152,6 +1152,10 @@ namespace Robust.Shared
         public static readonly CVarDef<string> Render3DDevCmdFile =
             CVarDef.Create("render3d.dev_cmd_file", "", CVar.CLIENTONLY);
 
+        /// <summary>Capture the mouse for first-person mouse-look while the game window is focused. Off for automated testing.</summary>
+        public static readonly CVarDef<bool> Render3DMouseCapture =
+            CVarDef.Create("render3d.mouse_capture", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
         public static readonly CVarDef<int> Render3DDebugMask =
             CVarDef.Create("render3d.debug_mask", 3, CVar.CLIENTONLY);
 

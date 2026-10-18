@@ -209,12 +209,14 @@ namespace Robust.Client.Graphics.Clyde
             var rel = new Vector2(origin.X, origin.Y) - vol.Center;
             var dirXY = new Vector2(dir.X, dir.Y);
 
-            var tMin = 0f;
+            // Only boxes the ray enters in front of the camera count: a box around the eye (standing inside a
+            // plant or a crate) is ignored, like GMod ignores what you're inside.
+            var tMin = float.NegativeInfinity;
             var tMax = float.PositiveInfinity;
             return Slab(Vector2.Dot(rel, ax), Vector2.Dot(dirXY, ax), -ex, ex, ref tMin, ref tMax)
                    && Slab(Vector2.Dot(rel, ay), Vector2.Dot(dirXY, ay), -ey, ey, ref tMin, ref tMax)
                    && Slab(origin.Z, dir.Z, vol.Z0, vol.Z1, ref tMin, ref tMax)
-                   && (t = tMin) >= 0f;
+                   && (t = tMin) > 0f;
         }
 
         private static bool Slab(float o, float d, float lo, float hi, ref float tMin, ref float tMax)

@@ -30,8 +30,7 @@ namespace Robust.Client.Graphics
         event Action<MouseMoveEventArgs> MouseMove;
         event Action<MouseEnterLeaveEventArgs> MouseEnterLeave;
         event Action<KeyEventArgs> KeyUp;
-        event Action<KeyEventArgs> KeyDown;
-        event Action<MouseWheelEventArgs> MouseWheel;
+        event Action<KeyEventArgs> KeyDown;
         event Action<WindowRequestClosedEventArgs> CloseWindow;
         event Action<WindowDestroyedEventArgs> DestroyWindow;
 

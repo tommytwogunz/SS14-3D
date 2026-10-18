@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
+using Robust.Shared.Maths;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Map;
 
@@ -65,6 +67,12 @@ public interface IWorld3DManager
     /// <summary>Camera height above the floor this frame (player height + eye offset). NaN = render3d.eye_height.</summary>
     float CameraHeight { get; set; }
 
+    /// <summary>Beams to draw this frame (physics-gun beams). Content clears and refills it every frame.</summary>
+    List<World3DBeam> Beams { get; }
+
+    /// <summary>Entity drawn as the first-person view model (the item in the active hand), if any.</summary>
+    EntityUid? ViewModelEntity { get; set; }
+
     /// <summary>Debug: log every entity the next 3D frame draws (shape, size, prototype).</summary>
     bool DumpNextFrame { get; set; }
 }
@@ -111,6 +119,9 @@ internal sealed class World3DManager : IWorld3DManager
 
     public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
     public float CameraHeight { get; set; } = float.NaN;
+
+    public List<World3DBeam> Beams { get; } = new();
+    public EntityUid? ViewModelEntity { get; set; }
 
     public bool DumpNextFrame { get; set; }
 
@@ -168,4 +179,16 @@ public struct World3DPose
     public Vector2 TiltDirection;
 
     public static readonly World3DPose Identity = new() { TiltDirection = new Vector2(1, 0) };
+}
+
+/// <summary>A glowing line segment in the 3D view (e.g. a physics-gun beam).</summary>
+public struct World3DBeam
+{
+    public Vector3 Start;
+    public Vector3 End;
+
+    /// <summary>Start at the first-person view model's muzzle instead of <see cref="Start"/>.</summary>
+    public bool FromViewModel;
+
+    public Color Color;
 }

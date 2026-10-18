@@ -318,6 +318,8 @@ void main()
 
             // Build dynamic geometry (entities) once; draw it in both passes.
             BuildWorld3DEntities(viewport, eye, mapId, camFlat);
+            BuildWorld3DViewModel(camPos);
+            EmitWorld3DBeams(camPos);
             _world3DDynVbo!.Use();
             _world3DDynVbo.Reallocate(new Span<Vertex3D>(_world3DVerts, 0, _world3DVertCount));
             EnsureWorld3DModelBuffer();
@@ -350,6 +352,9 @@ void main()
                 }
                 CheckGlError();
             }
+
+            if ((_render3DDebugMask & 2) != 0)
+                DrawWorld3DViewModel(program);
 
             // Restore the state Clyde's 2D batching expects.
             GL.DepthMask(false);

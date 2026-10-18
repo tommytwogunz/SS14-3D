@@ -60,6 +60,9 @@ namespace Robust.Client.Graphics
         /// <summary>Raised on mouse motion.</summary>
         event Action<MouseMoveEventArgs>? MouseMove;
 
+        /// <summary>Raw mouse wheel events, before UI routing.</summary>
+        event Action<MouseWheelEventArgs>? MouseWheel;
+
         event Action<WindowContentScaleEventArgs> OnWindowScaleChanged;
 
         OwnedTexture LoadTextureFromPNGStream(Stream stream, string? name = null,

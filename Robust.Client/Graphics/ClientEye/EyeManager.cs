@@ -25,6 +25,7 @@ namespace Robust.Client.Graphics
         [Dependency] private IClyde _displayManager = default!;
         [Dependency] private IEntityManager _entityManager = default!;
         [Dependency] private IUserInterfaceManager _uiManager = default!;
+        [Dependency] private Robust.Shared.Configuration.IConfigurationManager _cfg = default!;
         private ISawmill _logMill = default!;
 
         // We default to this when we get set to a null eye.
@@ -70,6 +71,15 @@ namespace Robust.Client.Graphics
         /// <inheritdoc />
         public Box2Rotated GetWorldViewbounds()
         {
+            // First-person 3D view: screen corners don't describe what's visible (they may even hit the ceiling),
+            // so treat everything within draw distance of the eye as "in view".
+            if (_cfg.GetCVar(Robust.Shared.CVars.Render3DEnabled))
+            {
+                var range = _cfg.GetCVar(Robust.Shared.CVars.Render3DDrawDistance);
+                var box = Box2.CenteredAround(CurrentEye.Position.Position, new Vector2(range * 2, range * 2));
+                return new Box2Rotated(box, Angle.Zero, box.Center);
+            }
+
             // This is an inefficient and roundabout way of geting the viewport.
             // But its a method that shouldn't get used much.
 
