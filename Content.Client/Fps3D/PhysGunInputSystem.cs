@@ -45,8 +45,10 @@ public sealed class PhysGunInputSystem : EntitySystem
         base.Initialize();
 
         CommandBinds.Builder
+            // Before drag-and-drop too: it holds back presses to detect drags and swallows the release,
+            // which would turn hold-to-grab into grab-on-release and lose the release.
             .BindBefore(EngineKeyFunctions.Use, new PointerInputCmdHandler(OnUse, ignoreUp: false, outsidePrediction: true),
-                typeof(SharedInteractionSystem))
+                typeof(SharedInteractionSystem), typeof(Content.Client.Interaction.DragDropSystem))
             .BindBefore(ContentKeyFunctions.ActivateItemInWorld, new PointerInputCmdHandler(OnActivate, ignoreUp: false, outsidePrediction: true),
                 typeof(SharedInteractionSystem))
             .BindBefore(EngineKeyFunctions.UseSecondary, new PointerInputCmdHandler(OnUseSecondary, outsidePrediction: true),

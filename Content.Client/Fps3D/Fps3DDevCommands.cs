@@ -187,3 +187,30 @@ public sealed class Fps3DPhysGunCommand : IConsoleCommand
         _entities.EntityNetManager.SendSystemNetworkMessage(msg);
     }
 }
+
+/// <summary>Closes open windows, menus and popups (e.g. the escape menu or a context menu) for clean tests.</summary>
+[AnyCommand]
+public sealed class Fps3DCloseUiCommand : IConsoleCommand
+{
+    [Dependency] private Robust.Client.UserInterface.IUserInterfaceManager _ui = default!;
+
+    public string Command => "fps3d_closeui";
+    public string Description => "Close all open windows and popups.";
+    public string Help => "Usage: fps3d_closeui";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        foreach (var child in System.Linq.Enumerable.ToArray(_ui.WindowRoot.Children))
+        {
+            if (child is Robust.Client.UserInterface.CustomControls.BaseWindow window)
+                window.Close();
+            else
+                child.Visible = false;
+        }
+
+        foreach (var child in System.Linq.Enumerable.ToArray(_ui.PopupRoot.Children))
+        {
+            child.Visible = false;
+        }
+    }
+}
