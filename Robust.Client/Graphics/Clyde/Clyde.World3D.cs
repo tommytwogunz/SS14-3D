@@ -34,6 +34,13 @@ namespace Robust.Client.Graphics.Clyde
         private const int DepthWallTops = DrawDepthTag.Default - 1;
         private const int DepthDoors = DrawDepthTag.Default + 8;
         private const int DepthBlastDoors = DrawDepthTag.Default + 9;
+        private const int DepthDeadMobs = DrawDepthTag.Default - 10;
+        private const int DepthSmallMobs = DrawDepthTag.Default - 9;
+        private const int DepthSmallObjects = DrawDepthTag.Default + 1;
+        private const int DepthWallMounted = DrawDepthTag.Default + 2;
+        private const int DepthItems = DrawDepthTag.Default + 4;
+        private const int DepthMobs = DrawDepthTag.Default + 6;
+        private const int DepthGasses = DrawDepthTag.Default + 17;
 
         private bool _render3DEnabled;
         private float _render3DFov;
@@ -114,12 +121,13 @@ uniform vec3 uFogColor;
 uniform float uFogDistance;
 uniform int uPass;
 uniform int uDebugHeight;
+uniform vec4 uTint;
 
 out vec4 fragColor;
 
 void main()
 {
-    vec4 tex = texture(uTex, vUV) * vColor;
+    vec4 tex = texture(uTex, vUV) * vColor * uTint;
 
     if (uDebugHeight != 0)
     {
@@ -204,6 +212,7 @@ void main()
             _cfg.OnValueChanged(CVars.Render3DDrawDistance, v => _render3DDrawDistance = v, true);
             _cfg.OnValueChanged(CVars.Render3DCeiling, v => _render3DCeiling = v, true);
             _cfg.OnValueChanged(CVars.Render3DDebugMask, v => _render3DDebugMask = v, true);
+            InitWorld3DModels();
         }
 
         /// <summary>
@@ -299,6 +308,7 @@ void main()
             program.SetUniform("uFogColor", fog);
             program.SetUniform("uFogDistance", Math.Max(8f, _render3DDrawDistance));
             program.SetUniformTextureMaybe("uTex", TextureUnit.Texture0);
+            program.SetUniform("uTint", Vector4.One);
             program.SetUniform("uDebugHeight", (_render3DDebugMask & 4) != 0 ? 1 : 0);
 
             GatherWorld3DLights(mapId, camFlat);
@@ -308,6 +318,7 @@ void main()
             BuildWorld3DEntities(viewport, eye, mapId, camFlat);
             _world3DDynVbo!.Use();
             _world3DDynVbo.Reallocate(new Span<Vertex3D>(_world3DVerts, 0, _world3DVertCount));
+            EnsureWorld3DModelBuffer();
 
             for (var pass = 0; pass < 2; pass++)
             {
@@ -325,11 +336,15 @@ void main()
                 SetMatrix(program, "uModel", Matrix4x4.Identity);
                 BindVertexArray(_world3DDynVao);
                 if ((_render3DDebugMask & 2) != 0)
-                foreach (var batch in _world3DBatches)
                 {
-                    SetTexture(TextureUnit.Texture0, batch.Texture);
-                    GL.DrawArrays(PrimitiveType.Triangles, batch.Start, batch.Count);
-                    _debugStats.LastGLDrawCalls += 1;
+                    foreach (var batch in _world3DBatches)
+                    {
+                        SetTexture(TextureUnit.Texture0, batch.Texture);
+                        GL.DrawArrays(PrimitiveType.Triangles, batch.Start, batch.Count);
+                        _debugStats.LastGLDrawCalls += 1;
+                    }
+
+                    DrawWorld3DModels(program);
                 }
                 CheckGlError();
             }
@@ -345,6 +360,7 @@ void main()
 
             _world3DDumpGrids = false;
             _world3DBatches.Clear();
+            _world3DInstances.Clear();
             _world3DVertCount = 0;
         }
 
@@ -487,24 +503,42 @@ void main()
             if (dump)
                 _clydeSawmill.Info($"world3d dump: cam {camFlat} yaw {_world3D.Yaw} pitch {_world3D.Pitch}, {_drawingSpriteList.Count} sprites");
 
-            for (var i = 0; i < _drawingSpriteList.Count; i++)
+            // Phase 1: classify everything and record which tiles hold walls and tables,
+            // since wall mounts, doors and items placed on tables depend on their neighbours.
+            var count = _drawingSpriteList.Count;
+            if (_world3DShapes.Length < count)
+                Array.Resize(ref _world3DShapes, Math.Max(count, _world3DShapes.Length * 2));
+            _world3DWallTiles.Clear();
+            _world3DTableTiles.Clear();
+
+            for (var i = 0; i < count; i++)
             {
                 ref var entry = ref _drawingSpriteList[i];
-                if (entry.Uid == local)
+                if (entry.Uid == local || (entry.WorldPos - camFlat).LengthSquared() > rangeSq)
+                {
+                    _world3DShapes[i] = World3DShape.Hidden;
                     continue;
+                }
 
-                if ((entry.WorldPos - camFlat).LengthSquared() > rangeSq)
-                    continue;
-
-                var sprite = entry.Sprite;
                 var shape = classifier?.Invoke(entry.Uid) ?? World3DShape.Auto;
                 if (shape == World3DShape.Auto)
                     shape = ClassifyWorld3D(entry, physicsQuery);
+                _world3DShapes[i] = shape;
+
+                if (shape == World3DShape.Box)
+                    _world3DWallTiles.Add(TileKey(entry));
+                else if (shape == World3DShape.Table)
+                    _world3DTableTiles.Add(TileKey(entry));
 
                 if (dump)
                     DumpWorld3DEntry(entry, shape, camFlat);
+            }
 
-                switch (shape)
+            // Phase 2: emit geometry.
+            for (var i = 0; i < count; i++)
+            {
+                ref var entry = ref _drawingSpriteList[i];
+                switch (_world3DShapes[i])
                 {
                     case World3DShape.Hidden:
                         continue;
@@ -513,6 +547,30 @@ void main()
                         break;
                     case World3DShape.Flat:
                         EmitFlat(entry);
+                        break;
+                    case World3DShape.Prop:
+                        EmitProp(entry);
+                        break;
+                    case World3DShape.Mob:
+                        EmitMob(entry, camYaw, fwdFlat);
+                        break;
+                    case World3DShape.Item:
+                        EmitItem(entry);
+                        break;
+                    case World3DShape.Table:
+                        EmitTable(entry);
+                        break;
+                    case World3DShape.WallMount:
+                        EmitWallMount(entry, camFlat);
+                        break;
+                    case World3DShape.Pane:
+                        EmitPane(entry);
+                        break;
+                    case World3DShape.Door:
+                        EmitCenterPanel(entry, 0.12f);
+                        break;
+                    case World3DShape.Fence:
+                        EmitCenterPanel(entry, 0.03f);
                         break;
                     default:
                         EmitBillboard(entry, camYaw, right, fwdFlat);
@@ -547,13 +605,27 @@ void main()
                         && physicsQuery.TryGetComponent(entry.Uid, out var body)
                         && body.CanCollide && body.Hard;
 
-            if (depth is DepthWalls or DepthWallTops)
-                return solid ? World3DShape.Box : World3DShape.Billboard;
-
-            if (depth is DepthDoors or DepthBlastDoors)
-                return solid ? World3DShape.Box : World3DShape.Hidden;
-
-            return World3DShape.Billboard;
+            switch (depth)
+            {
+                case DepthWalls or DepthWallTops:
+                    return solid ? World3DShape.Box : World3DShape.WallMount;
+                case DepthDoors or DepthBlastDoors:
+                    return solid ? World3DShape.Door : World3DShape.Hidden;
+                case DepthDeadMobs:
+                    return World3DShape.Item;
+                case DepthSmallMobs or DepthMobs:
+                    return World3DShape.Mob;
+                case DepthWallMounted:
+                    return World3DShape.WallMount;
+                case DepthItems:
+                    return World3DShape.Item;
+                case DepthSmallObjects:
+                    return entry.Xform.Anchored ? World3DShape.Prop : World3DShape.Item;
+                case >= DepthGasses:
+                    return World3DShape.Billboard;
+                default:
+                    return World3DShape.Prop;
+            }
         }
 
         /// <summary>

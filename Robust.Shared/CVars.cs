@@ -1144,6 +1144,10 @@ namespace Robust.Shared
             CVarDef.Create("render3d.ceiling", true, CVar.CLIENTONLY | CVar.ARCHIVE);
 
         /// <summary>Debug bitmask of 3D passes to draw: 1 floors/ceilings, 2 entities.</summary>
+        /// <summary>Vertical stretch for upright sprite models (props, mobs). SS14 sprites are 3/4-view, so height is foreshortened.</summary>
+        public static readonly CVarDef<float> Render3DUprightScale =
+            CVarDef.Create("render3d.upright_scale", 1.75f, CVar.CLIENTONLY | CVar.ARCHIVE);
+
         public static readonly CVarDef<int> Render3DDebugMask =
             CVarDef.Create("render3d.debug_mask", 3, CVar.CLIENTONLY);
 

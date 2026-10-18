@@ -85,7 +85,7 @@ public enum World3DShape : byte
 {
     /// <summary>Let the engine decide from draw depth.</summary>
     Auto,
-    /// <summary>Upright quad that turns to face the camera.</summary>
+    /// <summary>Upright flat quad that turns to face the camera (effects, overlays).</summary>
     Billboard,
     /// <summary>Lies flat on the floor (decals, pipes, puddles).</summary>
     Flat,
@@ -93,4 +93,20 @@ public enum World3DShape : byte
     Box,
     /// <summary>Not drawn.</summary>
     Hidden,
+    /// <summary>Solid model extruded from the sprite's front frame, rotated with the entity (machines, lockers, chairs).</summary>
+    Prop,
+    /// <summary>Thick cut-out that turns to face the camera, frame picked by view angle (characters, animals).</summary>
+    Mob,
+    /// <summary>Thin model lying flat on the floor, or on a table on the same tile (items, corpses).</summary>
+    Item,
+    /// <summary>Table: the top-down sprite becomes a slab at table height on a pedestal.</summary>
+    Table,
+    /// <summary>Panel on the face of the nearest wall (posters, signs, alarms, APCs, wall lights).</summary>
+    WallMount,
+    /// <summary>Full-height thin pane on the entity's local south edge (directional windows).</summary>
+    Pane,
+    /// <summary>Full-height panel through the tile centre, along the wall line (doors).</summary>
+    Door,
+    /// <summary>Like <see cref="Door"/> but thin and see-through (grilles).</summary>
+    Fence,
 }
