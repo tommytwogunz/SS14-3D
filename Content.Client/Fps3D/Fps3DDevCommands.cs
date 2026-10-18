@@ -432,3 +432,39 @@ public sealed partial class Fps3DCamLogCommand : IConsoleCommand
         _entities.System<Fps3DSystem>().StartCameraLog(seconds, args.Length > 1 && args[1] == "v");
     }
 }
+
+/// <summary>Lists an entity's mapped sprite layers (key, visible, RSI state) — for matching 3D model colour slots.</summary>
+[AnyCommand]
+public sealed partial class Fps3DLayersCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+
+    public string Command => "fps3d_layers";
+    public string Description => "List an entity's mapped sprite layers.";
+    public string Help => "Usage: fps3d_layers <entity uid>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length != 1 || !EntityUid.TryParse(args[0], out var uid) || !_entities.TryGetComponent(uid, out SpriteComponent? sprite))
+        {
+            shell.WriteLine(Help);
+            return;
+        }
+
+        var sprites = _entities.System<SpriteSystem>();
+        var sb = new System.Text.StringBuilder();
+        var keys = new List<object> { "jumpsuit", "outerClothing", "shoes", "head", "gloves", "back", "belt", "neck", "mask", "eyes", "ears", "id" };
+        foreach (var e in Enum.GetValues<Content.Shared.Humanoid.HumanoidVisualLayers>())
+            keys.Add(e);
+        foreach (var key in keys)
+        {
+            var found = key is Enum en ? sprites.LayerMapTryGet((uid, sprite), en, out var index, false) : sprites.LayerMapTryGet((uid, sprite), (string) key, out index, false);
+            if (!found)
+                continue;
+            var layer = (SpriteComponent.Layer) sprite[index];
+            sb.Append($" [{key}={index}:{(layer.Visible ? "on" : "off")}:{layer.ActualState?.StateId}]");
+        }
+
+        Logger.GetSawmill("fps3d").Info($"layers: {System.Linq.Enumerable.Count(sprite.AllLayers)} total;{sb}");
+    }
+}
