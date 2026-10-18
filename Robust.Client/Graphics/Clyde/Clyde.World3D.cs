@@ -362,6 +362,7 @@ void main()
             _world3DDumpGrids = false;
             _world3DBatches.Clear();
             _world3DInstances.Clear();
+            FinishWorld3DPicking(viewProj, camPos, size, mapId);
             _world3DVertCount = 0;
         }
 
@@ -539,6 +540,7 @@ void main()
             for (var i = 0; i < count; i++)
             {
                 ref var entry = ref _drawingSpriteList[i];
+                AddPickForShape(entry, _world3DShapes[i]);
                 switch (_world3DShapes[i])
                 {
                     case World3DShape.Hidden:

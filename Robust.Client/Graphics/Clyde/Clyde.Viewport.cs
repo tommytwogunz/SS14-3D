@@ -153,6 +153,9 @@ namespace Robust.Client.Graphics.Clyde
                 if (Eye == null)
                     return default;
 
+                if (_clyde.TryWorld3DLocalToWorld(this, point, out var coords3D))
+                    return coords3D;
+
                 var newPoint = point;
 
                 // (inlined version of UiProjMatrix^-1)
@@ -170,6 +173,9 @@ namespace Robust.Client.Graphics.Clyde
             {
                 if (Eye == null)
                     return default;
+
+                if (_clyde.TryWorld3DWorldToLocal(this, point, out var local3D))
+                    return local3D;
 
                 var eye = Eye;
                 var newPoint = point;

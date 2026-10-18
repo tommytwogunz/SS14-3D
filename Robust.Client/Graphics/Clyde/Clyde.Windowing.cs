@@ -496,6 +496,9 @@ namespace Robust.Client.Graphics.Clyde
         {
             public bool IsDisposed;
 
+            /// <summary>Relative (captured) mouse mode: the reported cursor position is pinned to the window centre.</summary>
+            public bool RelativeMouse;
+
             public WindowId Id;
             public Vector2 WindowScale;
             public Vector2 PixelRatio;
@@ -574,6 +577,7 @@ namespace Robust.Client.Graphics.Clyde
             {
                 DebugTools.AssertNotNull(_clyde._windowing);
 
+                Reg.RelativeMouse = enabled;
                 _clyde._windowing!.WindowSetRelativeMouseMode(Reg, enabled);
             }
 

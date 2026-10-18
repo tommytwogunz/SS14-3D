@@ -511,6 +511,7 @@ namespace Robust.Client.Graphics.Clyde
             {
                 // Free-standing: treat as a prop.
                 EmitProp(entry);
+                AddPickForShape(entry, World3DShape.Prop);
                 return;
             }
 
@@ -523,6 +524,10 @@ namespace Robust.Client.Graphics.Clyde
             var height = _entityManager.HasComponent<PointLightComponent>(entry.Uid) ? 2.0f : 1.25f;
             var placement = FaceAlong(outWorld)
                             * Matrix4x4.CreateTranslation(new Vector3(faceCenter + outWorld * (depth / 2f + 0.005f), height));
+
+            var mountSize = FirstFrameSize(sprite);
+            AddPick(entry.Uid, faceCenter + outWorld * 0.05f, new Vector2(outWorld.Y, -outWorld.X) * (mountSize.X / 2f),
+                outWorld * 0.06f, height - mountSize.Y / 2f, height + mountSize.Y / 2f);
 
             for (var l = 0; l < sprite.Layers.Count; l++)
             {

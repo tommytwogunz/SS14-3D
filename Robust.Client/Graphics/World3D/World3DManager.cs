@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using Robust.Shared.GameObjects;
+using Robust.Shared.Map;
 
 namespace Robust.Client.Graphics.World3D;
 
@@ -40,6 +41,21 @@ public interface IWorld3DManager
     /// </summary>
     Func<EntityUid, float>? DoorOpenAmount { get; set; }
 
+    /// <summary>
+    ///     Set by content while the mouse is captured for mouse-look: screen→world conversions on the 3D view then
+    ///     aim through the screen centre (crosshair) instead of the cursor.
+    /// </summary>
+    bool CrosshairMode { get; set; }
+
+    /// <summary>Entity under the crosshair last frame, if any.</summary>
+    EntityUid? CrosshairEntity { get; }
+
+    /// <summary>Where the crosshair ray hit last frame (entity position, or floor point).</summary>
+    MapCoordinates CrosshairPoint { get; }
+
+    /// <summary>Distance from the camera to the crosshair hit, in metres.</summary>
+    float CrosshairDistance { get; }
+
     /// <summary>Debug: log every entity the next 3D frame draws (shape, size, prototype).</summary>
     bool DumpNextFrame { get; set; }
 }
@@ -78,6 +94,11 @@ internal sealed class World3DManager : IWorld3DManager
     public Func<EntityUid, World3DShape>? ShapeClassifier { get; set; }
 
     public Func<EntityUid, float>? DoorOpenAmount { get; set; }
+
+    public bool CrosshairMode { get; set; }
+    public EntityUid? CrosshairEntity { get; internal set; }
+    public MapCoordinates CrosshairPoint { get; internal set; } = MapCoordinates.Nullspace;
+    public float CrosshairDistance { get; internal set; } = float.PositiveInfinity;
 
     public bool DumpNextFrame { get; set; }
 

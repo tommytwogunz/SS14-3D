@@ -173,6 +173,10 @@ internal partial class Clyde
                 return;
 
             var newPos = new Vector2(ev.X, ev.Y) * windowReg.PixelRatio;
+            // Captured mouse (first-person look): keep the logical cursor on the crosshair so UI hover and clicks
+            // resolve at the screen centre instead of wherever the hidden cursor drifted.
+            if (windowReg.RelativeMouse)
+                newPos = (Vector2) windowReg.FramebufferSize / 2f;
             var delta = new Vector2(ev.XRel, ev.YRel);
             windowReg.LastMousePos = newPos;
 
