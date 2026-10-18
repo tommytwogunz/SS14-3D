@@ -70,6 +70,12 @@ public interface IWorld3DManager
     /// </summary>
     Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
 
+    /// <summary>Optional: stylized material (Resources/Models3D/Materials/&lt;name&gt;.png) for a floor tile definition ID. Null = pixel tile.</summary>
+    Func<string, string?>? TileMaterial { get; set; }
+
+    /// <summary>Optional: stylized material for a wall/window entity drawn as a box. Null = generated panel.</summary>
+    Func<EntityUid, string?>? WallMaterial { get; set; }
+
     /// <summary>Temporary camera kick (radians: pitch, yaw, roll) on top of the look direction: view punch, recoil, knockdown roll.</summary>
     Vector3 CameraPunch { get; set; }
 
@@ -143,6 +149,8 @@ internal sealed class World3DManager : IWorld3DManager
 
     public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
     public Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
+    public Func<string, string?>? TileMaterial { get; set; }
+    public Func<EntityUid, string?>? WallMaterial { get; set; }
     public Vector3 CameraPunch { get; set; }
     public World3DModelRequest? ViewArms { get; set; }
     public Matrix4x4 ViewModelOffset { get; set; } = Matrix4x4.Identity;

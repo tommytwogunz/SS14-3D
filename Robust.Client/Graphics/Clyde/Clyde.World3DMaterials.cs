@@ -7,6 +7,7 @@ using Robust.Shared.Graphics.RSI;
 using Robust.Shared.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using Robust.Shared.Utility;
 
 namespace Robust.Client.Graphics.Clyde
 {
@@ -19,12 +20,12 @@ namespace Robust.Client.Graphics.Clyde
     {
         private const int MaterialSize = 32;
 
-        private readonly Dictionary<World3DModelKey, (ClydeTexture Texture, bool Glass)> _world3DWallMaterials = new();
+        private readonly Dictionary<World3DModelKey, (ClydeTexture Texture, bool Glass, Vector4 Color)> _world3DWallMaterials = new();
         private ClydeTexture? _world3DCeilingMaterial;
         private readonly HashSet<ClydeHandle> _world3DMipmapped = new();
 
         /// <summary>The generated wall panel for a wall/window sprite, and whether it's see-through.</summary>
-        private (ClydeTexture Texture, bool Glass)? GetWallMaterial(SpriteComponent sprite)
+        private (ClydeTexture Texture, bool Glass, Vector4 Color)? GetWallMaterial(SpriteComponent sprite)
         {
             // Prefer the RSI's "full" icon (the whole wall); fall back to whatever the first layer shows.
             Texture? source = null;
@@ -65,8 +66,127 @@ namespace Robust.Client.Graphics.Clyde
             var (baseColor, coverage) = AverageColor(pixels);
             var glass = coverage < 0.75f;
             var texture = MakePanelTexture(baseColor, glass, rivets: !glass, $"world3d-wall-{key.Left}-{key.Top}");
-            _world3DWallMaterials[key] = (texture, glass);
-            return (texture, glass);
+            _world3DWallMaterials[key] = (texture, glass, baseColor);
+            return (texture, glass, baseColor);
+        }
+
+        // Stylized material library (Resources/Models3D/Materials, made by Tools/models3d/materials.py): 256 px per metre,
+        // packed into one atlas with 16 px of wrapped padding per cell so each tiles seamlessly and mips don't bleed.
+        private const int MatCell = 256;
+        private const int MatPad = 16;
+        private ClydeTexture? _world3DMatAtlas;
+        private readonly Dictionary<string, (Vector2 TL, Vector2 BR)> _world3DMatRegions = new();
+        private bool _world3DMatLoaded;
+
+        /// <summary>Atlas texture and UV rectangle (ResolveUV convention) of a library material.</summary>
+        private bool TryLibraryMaterial(string? name, out ClydeTexture atlas, out Vector2 uvTL, out Vector2 uvBR)
+        {
+            EnsureMaterialAtlas();
+            atlas = _world3DMatAtlas!;
+            uvTL = uvBR = default;
+            if (name == null || _world3DMatAtlas == null || !_world3DMatRegions.TryGetValue(name, out var r))
+                return false;
+
+            (uvTL, uvBR) = r;
+            return true;
+        }
+
+        private void EnsureMaterialAtlas()
+        {
+            if (_world3DMatLoaded)
+                return;
+            _world3DMatLoaded = true;
+
+            var files = new List<ResPath>();
+            foreach (var path in _resManager.ContentFindFiles(new ResPath("/Models3D/Materials/")))
+            {
+                if (path.Extension == "png")
+                    files.Add(path);
+            }
+
+            if (files.Count == 0)
+                return;
+
+            files.Sort((a, b) => string.CompareOrdinal(a.ToString(), b.ToString()));
+            const int cols = 8;
+            var rows = (files.Count + cols - 1) / cols;
+            const int stride = MatCell + 2 * MatPad;
+            using var atlas = new Image<Rgba32>(cols * stride, rows * stride);
+            float aw = atlas.Width, ah = atlas.Height;
+
+            for (var i = 0; i < files.Count; i++)
+            {
+                using var stream = _resManager.ContentFileRead(files[i]);
+                using var img = Image.Load<Rgba32>(stream);
+                var ox = i % cols * stride;
+                var oy = i / cols * stride;
+                for (var y = -MatPad; y < MatCell + MatPad; y++)
+                for (var x = -MatPad; x < MatCell + MatPad; x++)
+                {
+                    var sx = ((x % img.Width) + img.Width) % img.Width;
+                    var sy = ((y % img.Height) + img.Height) % img.Height;
+                    atlas[ox + MatPad + x, oy + MatPad + y] = img[sx, sy];
+                }
+
+                float l = ox + MatPad, t = oy + MatPad, r = l + MatCell, b = t + MatCell;
+                // Same convention as ResolveUV: image row t maps to v = (H - t) / H.
+                _world3DMatRegions[files[i].FilenameWithoutExtension] =
+                    (new Vector2(l / aw, (ah - t) / ah), new Vector2(r / aw, (ah - b) / ah));
+            }
+
+            _world3DMatAtlas = (ClydeTexture) LoadTextureFromImage(atlas, "world3d-materials");
+            var loaded = _loadedTextures[_world3DMatAtlas.TextureId];
+            GL.BindTexture(TextureTarget.Texture2D, loaded.OpenGLObject.Handle);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 4);
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int) TextureMinFilter.LinearMipmapLinear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int) TextureMagFilter.Linear);
+            GL.BindTexture(TextureTarget.Texture2D, 0);
+            _world3DMipmapped.Add(_world3DMatAtlas.TextureId);
+            CheckGlError();
+            _clydeSawmill.Info($"world3d: material library: {files.Count} materials");
+        }
+
+        private readonly Dictionary<(int Type, byte Variant), Vector4> _world3DTileTints = new();
+
+        /// <summary>A floor tile's tint for its stylized material: the average colour of its own pixel art.</summary>
+        private Vector4 TileTint(Robust.Shared.Map.Tile tile, Box2 region)
+        {
+            if (_world3DTileTints.TryGetValue((tile.TypeId, tile.Variant), out var cached))
+                return cached;
+
+            var atlas = (ClydeTexture) _tileDefinitionManager.TileTextureAtlas;
+            var loaded = _loadedTextures[atlas.TextureId];
+            float w = loaded.Width, h = loaded.Height;
+            // Regions are UVs with v = (H - row) / H; convert back to an image rectangle.
+            var vMin = MathF.Min(region.Bottom, region.Top);
+            var vMax = MathF.Max(region.Bottom, region.Top);
+            var left = (int) MathF.Round(region.Left * w);
+            var right = (int) MathF.Round(region.Right * w);
+            var top = (int) MathF.Round((1 - vMax) * h);
+            var bottom = (int) MathF.Round((1 - vMin) * h);
+            var tint = new Vector4(0.6f, 0.6f, 0.62f, 1f);
+            if (right > left && bottom > top)
+            {
+                var (avg, _) = AverageColor(GetRegionRgba(atlas, left, top, right - left, bottom - top));
+                tint = SurfaceTint(avg);
+            }
+
+            _world3DTileTints[(tile.TypeId, tile.Variant)] = tint;
+            return tint;
+        }
+
+        /// <summary>
+        ///     Tint for a library material from an SS14 colour: keep its hue and saturation, lift dark colours so the
+        ///     already-shaded material doesn't go muddy.
+        /// </summary>
+        private static Vector4 SurfaceTint(Vector4 color)
+        {
+            var max = MathF.Max(color.X, MathF.Max(color.Y, color.Z));
+            if (max < 0.001f)
+                return new Vector4(0.3f, 0.3f, 0.3f, 1f);
+            var target = Math.Clamp(max * 1.45f, 0.32f, 1f);
+            return new Vector4(color.X / max * target, color.Y / max * target, color.Z / max * target, 1f);
         }
 
         /// <summary>One shared ceiling panel for every room.</summary>

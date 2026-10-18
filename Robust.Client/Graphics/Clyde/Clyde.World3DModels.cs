@@ -595,8 +595,23 @@ namespace Robust.Client.Graphics.Clyde
         {
             // Directional windows occupy the south edge of their tile in local space (fixture -0.5..-0.28).
             var rot = entry.WorldRot;
-            var center = entry.WorldPos + rot.RotateVec(new Vector2(0, -0.39f));
-            EmitPanel(entry, center, rot.RotateVec(new Vector2(0.5f, 0)), rot.RotateVec(new Vector2(0, 0.11f)));
+
+            // The sprite is a top-down strip (mostly transparent), so stretching it up a panel made knee-high glass.
+            // Draw a real full-height pane instead: the library glass (frame + see-through glass), thin, on the edge,
+            // lightly tinted by the window's own colour (plasma, reinforced...).
+            if (TryLibraryMaterial("glass_pane", out var atlas, out var uvTL, out var uvBR))
+            {
+                var center = entry.WorldPos + rot.RotateVec(new Vector2(0, -0.44f));
+                var tint = Vector4.One;
+                if (GetWallMaterial(entry.Sprite) is var (_, _, color))
+                    tint = Vector4.Lerp(Vector4.One, SurfaceTint(color), 0.45f);
+                PushOrientedBox(atlas.TextureId, center, rot.RotateVec(new Vector2(0.5f, 0)), rot.RotateVec(new Vector2(0, 0.04f)),
+                    0f, _render3DWallHeight, uvTL, uvBR, tint);
+                return;
+            }
+
+            var legacyCenter = entry.WorldPos + rot.RotateVec(new Vector2(0, -0.39f));
+            EmitPanel(entry, legacyCenter, rot.RotateVec(new Vector2(0.5f, 0)), rot.RotateVec(new Vector2(0, 0.11f)));
         }
 
         private void EmitCenterPanel(in SpriteData entry, float halfThickness)

@@ -216,6 +216,8 @@ void main()
             public GameTick BuiltTick;
             public int BuiltChunkCount = -1;
             public string DebugFirst = "";
+            // Built from the stylized material atlas instead of the pixel tile atlas.
+            public bool UsesMaterials;
         }
 
         private void InitWorld3D()
@@ -433,10 +435,12 @@ void main()
                     m.M31, m.M32, 0, 1);
                 SetMatrix(program, "uModel", model);
                 BindVertexArray(mesh.Vao);
+                if (mesh.UsesMaterials)
+                    SetTexture(TextureUnit.Texture0, _world3DMatAtlas!);
                 GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.CeilingStart);
                 if (mesh.VertexCount > mesh.CeilingStart)
                 {
-                    SetTexture(TextureUnit.Texture0, GetCeilingMaterial());
+                    SetTexture(TextureUnit.Texture0, mesh.UsesMaterials ? _world3DMatAtlas! : GetCeilingMaterial());
                     GL.DrawArrays(PrimitiveType.Triangles, mesh.CeilingStart, mesh.VertexCount - mesh.CeilingStart);
                     SetTexture(TextureUnit.Texture0, _tileDefinitionManager.TileTextureAtlas);
                     _debugStats.LastGLDrawCalls += 1;
@@ -474,7 +478,9 @@ void main()
             }
 
             var comp = grid.Comp;
-            if (mesh.BuiltTick == comp.LastTileModifiedTick && mesh.BuiltChunkCount == comp.ChunkCount)
+            EnsureMaterialAtlas();
+            if (mesh.BuiltTick == comp.LastTileModifiedTick && mesh.BuiltChunkCount == comp.ChunkCount
+                && mesh.UsesMaterials == (_world3D!.TileMaterial != null && _world3DMatAtlas != null))
                 return mesh;
 
             var verts = new List<Vertex3D>(comp.ChunkCount * comp.ChunkSize * comp.ChunkSize * 12);
@@ -482,8 +488,15 @@ void main()
             var ceilColor = Vector4.One;
             var h = _render3DWallHeight;
             var ceilVerts = new List<Vertex3D>();
-            // Every ceiling shares one panel material (drawn as a second range of this mesh).
-            var (_, ceilTL, ceilBR) = ResolveUV(GetCeilingMaterial());
+            // Stylized materials when content maps tiles to them (one atlas for floors and ceilings); otherwise the
+            // pixel tile atlas and a generated ceiling panel (drawn as a second range of this mesh).
+            Vector2 ceilTL = default, ceilBR = default;
+            var useLib = _world3D!.TileMaterial != null && TryLibraryMaterial("ceiling_panel", out _, out ceilTL, out ceilBR);
+            mesh.UsesMaterials = useLib;
+            if (useLib)
+                ceilColor = new Vector4(0.6f, 0.61f, 0.64f, 1f); // soft grey, not stark white
+            if (!useLib)
+                (_, ceilTL, ceilBR) = ResolveUV(GetCeilingMaterial());
             var ceilUv0 = ceilTL;
             var ceilUv1 = new Vector2(ceilBR.X, ceilTL.Y);
             var ceilUv2 = ceilBR;
@@ -500,6 +513,16 @@ void main()
                 var region = regions == null || regions.Length <= tile.Variant
                     ? _tileDefinitionManager.ErrorTileRegion
                     : regions[tile.Variant];
+                var tileColor = floorColor;
+                if (useLib)
+                {
+                    var matName = _world3D.TileMaterial!(_tileDefinitionManager[tile.TypeId].ID) ?? "floor_plates";
+                    if (!TryLibraryMaterial(matName, out _, out var mTL, out var mBR))
+                        TryLibraryMaterial("floor_plates", out _, out mTL, out mBR);
+                    tileColor = TileTint(tile, region);
+                    // Same corner order as the pixel path below: Left/Bottom, Right/Bottom, Right/Top, Left/Top.
+                    region = new Box2(mTL.X, mBR.Y, mBR.X, mTL.Y);
+                }
 
                 var x = (float) tileRef.Value.GridIndices.X;
                 var y = (float) tileRef.Value.GridIndices.Y;
@@ -509,7 +532,7 @@ void main()
                     new Vector3(x, y, 0), new Vector3(x + 1, y, 0), new Vector3(x + 1, y + 1, 0), new Vector3(x, y + 1, 0),
                     new Vector2(region.Left, region.Bottom), new Vector2(region.Right, region.Bottom),
                     new Vector2(region.Right, region.Top), new Vector2(region.Left, region.Top),
-                    Vector3.UnitZ, floorColor);
+                    Vector3.UnitZ, tileColor);
 
                 if (_render3DCeiling)
                 {
@@ -848,11 +871,20 @@ void main()
             var sprite = entry.Sprite;
 
             // Generated panel material in the wall's own colours (see Clyde.World3DMaterials).
-            if (GetWallMaterial(sprite) is not var (material, _))
+            if (GetWallMaterial(sprite) is not var (material, glass, wallColor))
                 return;
 
             var color = sprite.Layers.Count > 0 ? LayerColor(sprite, sprite.Layers[0]) : Vector4.One;
             var (ct, uvTL, uvBR) = ResolveUV(material);
+            // Stylized library material when content names one (glass for windows), tinted with the wall's own colour.
+            var libName = glass ? "glass_pane" : _world3D!.WallMaterial?.Invoke(entry.Uid);
+            if (_world3D!.WallMaterial != null && TryLibraryMaterial(libName, out var libAtlas, out var libTL, out var libBR))
+            {
+                ct = libAtlas;
+                uvTL = libTL;
+                uvBR = libBR;
+                color *= glass ? new Vector4(1, 1, 1, 1) : SurfaceTint(wallColor);
+            }
             var uvBL = new Vector2(uvTL.X, uvBR.Y);
             var uvTR = new Vector2(uvBR.X, uvTL.Y);
 
