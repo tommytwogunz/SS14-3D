@@ -51,6 +51,14 @@ public sealed partial class Height3DComponent : Component
     [DataField, AutoNetworkedField]
     public float LookPitch;
 
+    /// <summary>Held by a physics gun: the gun drives its height, no gravity.</summary>
+    [DataField, AutoNetworkedField]
+    public bool Held;
+
+    /// <summary>Frozen in place by a physics gun: no gravity, body made static until grabbed again.</summary>
+    [DataField, AutoNetworkedField]
+    public bool Frozen;
+
     /// <summary>Whether the simulation should step this entity (airborne, tipping, or support may have moved).</summary>
     [ViewVariables]
     public bool Awake = true;

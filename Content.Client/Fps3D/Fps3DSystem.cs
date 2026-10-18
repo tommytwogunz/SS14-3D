@@ -36,6 +36,10 @@ public sealed class Fps3DSystem : EntitySystem
     [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
     [Dependency] private SharedFps3DLookSystem _look = default!;
     [Dependency] private SharedHeight3DSystem _height = default!;
+    [Dependency] private PhysGunInputSystem _physGun = default!;
+    [Dependency] private Content.Shared.Hands.EntitySystems.SharedHandsSystem _hands = default!;
+    [Dependency] private Robust.Shared.Containers.SharedContainerSystem _container = default!;
+    [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private IOverlayManager _overlays = default!;
     [Dependency] private IEyeManager _eyeManager = default!;
     [Dependency] private Robust.Client.ResourceManagement.IResourceCache _cache = default!;
@@ -48,6 +52,7 @@ public sealed class Fps3DSystem : EntitySystem
     public float Sensitivity = 0.0022f;
 
     private bool _enabled;
+    private bool _mouseCaptureAllowed = true;
     private bool _mouseCaptured;
 
     /// <summary>Dev: aim through the crosshair even without mouse capture (fps3d_crosshairtest).</summary>
@@ -89,6 +94,7 @@ public sealed class Fps3DSystem : EntitySystem
         _crosshair = new Fps3DCrosshairOverlay(EntityManager, _eyeManager, _ui, _world3D, _cache);
         _overlays.AddOverlay(_crosshair);
         Subs.CVar(_cfg, CVars.Render3DEnabled, v => _enabled = _crosshair.Enabled = v, true);
+        Subs.CVar(_cfg, CVars.Render3DMouseCapture, v => _mouseCaptureAllowed = v, true);
     }
 
     public override void Shutdown()
@@ -111,6 +117,7 @@ public sealed class Fps3DSystem : EntitySystem
         // Hold Left Alt to free the cursor for the UI (inventory, hotbar, menus), like GMod's context key.
         // Also release while typing, or while any window or popup (context menu, UIs) is open.
         var wantCapture = _enabled
+                          && _mouseCaptureAllowed
                           && _clyde.MainWindow.IsFocused
                           && !_input.IsKeyDown(Keyboard.Key.Alt)
                           && _ui.KeyboardFocused == null
@@ -126,6 +133,7 @@ public sealed class Fps3DSystem : EntitySystem
         {
             SyncLookYaw();
             UpdateCameraHeight(frameTime);
+            UpdateViewModelAndBeams();
         }
     }
 
@@ -192,6 +200,44 @@ public sealed class Fps3DSystem : EntitySystem
         return z;
     }
 
+    /// <summary>First-person view model (active-hand item) and physics-gun beams for this frame.</summary>
+    private void UpdateViewModelAndBeams()
+    {
+        var local = _player.LocalEntity;
+        _world3D.ViewModelEntity = local is { } p && _hands.TryGetActiveItem(p, out var item) ? item : null;
+
+        _world3D.Beams.Clear();
+        var query = EntityQueryEnumerator<PhysGunComponent, TransformComponent>();
+        while (query.MoveNext(out var gunUid, out var gun, out var gunXform))
+        {
+            if (gun.Held is not { } held || !TryComp<TransformComponent>(held, out var heldXform)
+                || !_container.TryGetContainingContainer((gunUid, null, null), out var container))
+                continue;
+
+            var holder = container.Owner;
+            var targetPos = _transform.GetWorldPosition(heldXform);
+            var targetZ = TryComp<Height3DComponent>(held, out var h) ? SmoothedZ(held, h.Z) + h.Height / 2f : 0.5f;
+            var beam = new World3DBeam
+            {
+                End = new Vector3(targetPos, targetZ),
+                Color = Color.FromHex("#6fc9ff"),
+            };
+
+            if (holder == local)
+            {
+                beam.FromViewModel = true;
+            }
+            else
+            {
+                var holderPos = _transform.GetWorldPosition(holder);
+                var holderZ = TryComp<Height3DComponent>(holder, out var hh) ? hh.Z : 0f;
+                beam.Start = new Vector3(holderPos, holderZ + 1.2f);
+            }
+
+            _world3D.Beams.Add(beam);
+        }
+    }
+
     private bool AnyWindowOpen()
     {
         foreach (var child in _ui.WindowRoot.Children)
@@ -250,6 +296,13 @@ public sealed class Fps3DSystem : EntitySystem
     {
         if (!_mouseCaptured || _ignoreMotionFrames > 0)
             return;
+
+        // Physics gun: E held with something grabbed rotates the object instead of the camera.
+        if (_physGun.Rotating)
+        {
+            _physGun.AddRotation(args.Relative);
+            return;
+        }
 
         // Mouse right turns right (clockwise = negative yaw); mouse down looks down.
         _world3D.AddLook(-args.Relative.X * Sensitivity, -args.Relative.Y * Sensitivity);

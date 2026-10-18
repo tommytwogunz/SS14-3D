@@ -167,6 +167,20 @@ public sealed class SharedHeight3DSystem : EntitySystem
         Dirty(ent, comp);
     }
 
+    /// <summary>Gets the entity's height state, creating one (item or 1 m prop) if it has none, e.g. when a physics gun grabs it.</summary>
+    public Height3DComponent EnsureHeight(EntityUid uid)
+    {
+        if (TryComp<Height3DComponent>(uid, out var existing))
+            return existing;
+
+        var comp = EnsureComp<Height3DComponent>(uid);
+        var item = HasComp<ItemComponent>(uid);
+        comp.Kind = item ? Height3DKind.Item : Height3DKind.Prop;
+        comp.Height = item ? 0.15f : 1f;
+        Dirty(uid, comp);
+        return comp;
+    }
+
     #endregion
 
     #region Simulation
@@ -198,6 +212,10 @@ public sealed class SharedHeight3DSystem : EntitySystem
                 continue;
 
             if (!comp.Awake && comp.Kind != Height3DKind.Mob && !(sweep && comp.Z > 0.01f))
+                continue;
+
+            // Physics-gun held (driven by the gun) or frozen (hangs in place).
+            if (comp.Held || comp.Frozen)
                 continue;
 
             if (xform.MapUid == null || _container.IsEntityInContainer(uid))
@@ -276,7 +294,7 @@ public sealed class SharedHeight3DSystem : EntitySystem
         }
     }
 
-    private void RefilterContacts(EntityUid uid, TransformComponent xform)
+    public void RefilterContacts(EntityUid uid, TransformComponent xform)
     {
         if (!TryComp<FixturesComponent>(uid, out var fixtures))
             return;

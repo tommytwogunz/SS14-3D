@@ -1,0 +1,33 @@
+# GMod-style physics gun for the first-person mode (see Content.Shared/Fps3D/PhysGunComponent.cs).
+# Art: the tesla gun sprite (CC-BY-SA-3.0, TGStation; see its meta.json) tinted physgun blue.
+
+- type: entity
+  parent: BaseItem
+  id: PhysGun
+  name: physics gun
+  description: Hold left mouse to grab what you're aiming at. Scroll to pull it closer or push it away, hold E and move the mouse to rotate it, right-click to freeze it in place. Let go while swinging to throw it.
+  components:
+  - type: Sprite
+    sprite: Objects/Weapons/Guns/Battery/tesla_gun.rsi
+    state: base
+    color: "#8fd3ff"
+  - type: Item
+    size: Normal
+    sprite: Objects/Weapons/Guns/Battery/tesla_gun.rsi
+  - type: PhysGun
+
+- type: entity
+  parent: BaseAction
+  id: ActionPhysGun
+  name: Physics Gun
+  description: Put your physics gun in your active hand (spawns a new one if you lost it).
+  components:
+  - type: Action
+    checkCanInteract: false
+  - type: Sprite
+    layers:
+    - sprite: Objects/Weapons/Guns/Battery/tesla_gun.rsi
+      state: base
+      color: "#8fd3ff"
+  - type: InstantAction
+    event: !type:PhysGunSummonActionEvent

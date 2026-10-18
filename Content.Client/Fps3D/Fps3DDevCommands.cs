@@ -156,3 +156,34 @@ public sealed class Fps3DTrackCommand : IConsoleCommand
         }
     }
 }
+
+/// <summary>Sends the physics gun's wheel/rotate messages (the ones mouse wheel and E + mouse send) for testing.</summary>
+[AnyCommand]
+public sealed class Fps3DPhysGunCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+
+    public string Command => "fps3d_physgun";
+    public string Description => "Physics gun test input: scroll <delta> | rotate <yaw> <tilt> (radians).";
+    public string Help => "Usage: fps3d_physgun scroll <delta> | fps3d_physgun rotate <yaw> <tilt>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        EntityEventArgs? msg = args switch
+        {
+            ["scroll", var d] when float.TryParse(d, inv, out var delta) => new Content.Shared.Fps3D.PhysGunScrollMessage(delta),
+            ["rotate", var y, var t] when float.TryParse(y, inv, out var yaw) && float.TryParse(t, inv, out var tilt)
+                => new Content.Shared.Fps3D.PhysGunRotateMessage(yaw, tilt),
+            _ => null,
+        };
+
+        if (msg == null)
+        {
+            shell.WriteLine(Help);
+            return;
+        }
+
+        _entities.EntityNetManager.SendSystemNetworkMessage(msg);
+    }
+}
