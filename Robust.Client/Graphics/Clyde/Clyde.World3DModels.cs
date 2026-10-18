@@ -24,8 +24,8 @@ namespace Robust.Client.Graphics.Clyde
 
         private float _render3DUprightScale = 1.75f;
 
-        // CPU copies of texture alpha (downloaded once per texture, usually the sprite atlas).
-        private readonly Dictionary<ClydeHandle, (byte[] Alpha, int W, int H)> _world3DAlpha = new();
+        // CPU copies of the sprite-frame rectangles we built models or materials from.
+        private readonly Dictionary<World3DModelKey, byte[]> _world3DRegionPixels = new();
 
         // Extruded meshes, appended into one VBO.
         private readonly Dictionary<World3DModelKey, (int Start, int Count)> _world3DModels = new();
@@ -62,42 +62,37 @@ namespace Robust.Client.Graphics.Clyde
 
         #region Mesh generation
 
-        private (byte[] Alpha, int W, int H) GetTextureAlpha(ClydeTexture texture)
+        /// <summary>
+        ///     RGBA pixels (top-down rows) of one rectangle of a GPU texture, read with glGetTextureSubImage so we never
+        ///     download a whole (up to 12288²) sprite atlas. Cached per rectangle.
+        /// </summary>
+        private byte[] GetRegionRgba(ClydeTexture texture, int left, int top, int width, int height)
         {
-            if (_world3DAlpha.TryGetValue(texture.TextureId, out var cached))
+            var key = new World3DModelKey(texture.TextureId, left, top, left + width, top + height, -1);
+            if (_world3DRegionPixels.TryGetValue(key, out var cached))
                 return cached;
 
             var loaded = _loadedTextures[texture.TextureId];
-            var w = loaded.Width;
-            var h = loaded.Height;
-            var rgba = new byte[w * h * 4];
-            var prev = GL.GetInteger(GetPName.TextureBinding2D);
-            GL.BindTexture(TextureTarget.Texture2D, loaded.OpenGLObject.Handle);
+            var glRows = new byte[width * height * 4];
             unsafe
             {
-                fixed (byte* p = rgba)
+                fixed (byte* p = glRows)
                 {
-                    GL.GetTexImage(TextureTarget.Texture2D, 0, PixelFormat.Rgba, PixelType.UnsignedByte, (IntPtr) p);
+                    // GL rows are bottom-up: image row `top` is GL row H - top - 1.
+                    GL.GetTextureSubImage(loaded.OpenGLObject.Handle, 0, left, loaded.Height - (top + height), 0,
+                        width, height, 1, PixelFormat.Rgba, PixelType.UnsignedByte, glRows.Length, (IntPtr) p);
                 }
             }
-            GL.BindTexture(TextureTarget.Texture2D, prev);
             CheckGlError();
 
-            // GL rows are bottom-up; store alpha top-down so (x, y) matches image/atlas pixel coordinates.
-            var alpha = new byte[w * h];
-            for (var y = 0; y < h; y++)
+            var rgba = new byte[glRows.Length];
+            for (var y = 0; y < height; y++)
             {
-                var src = (h - 1 - y) * w * 4;
-                var dst = y * w;
-                for (var x = 0; x < w; x++)
-                {
-                    alpha[dst + x] = rgba[src + x * 4 + 3];
-                }
+                System.Buffer.BlockCopy(glRows, (height - 1 - y) * width * 4, rgba, y * width * 4, width * 4);
             }
 
-            cached = (alpha, w, h);
-            _world3DAlpha[texture.TextureId] = cached;
-            return cached;
+            _world3DRegionPixels[key] = rgba;
+            return rgba;
         }
 
         /// <summary>
@@ -117,15 +112,16 @@ namespace Robust.Client.Graphics.Clyde
             if (_world3DModels.TryGetValue(key, out var existing))
                 return (ct.TextureId, existing.Start, existing.Count, height);
 
-            var (alpha, texW, texH) = GetTextureAlpha(ct);
+            var loaded = _loadedTextures[ct.TextureId];
+            var rgba = GetRegionRgba(ct, left, top, right - left, bottom - top);
             var start = _world3DModelVerts.Count;
-            BuildExtrusion(_world3DModelVerts, alpha, texW, texH, left, top, right, bottom, depth);
+            BuildExtrusion(_world3DModelVerts, rgba, loaded.Width, loaded.Height, left, top, right, bottom, depth);
             var count = _world3DModelVerts.Count - start;
             _world3DModels[key] = (start, count);
             return (ct.TextureId, start, count, height);
         }
 
-        private static void BuildExtrusion(List<Vertex3D> verts, byte[] alpha, int texW, int texH,
+        private static void BuildExtrusion(List<Vertex3D> verts, byte[] rgba, int texW, int texH,
             int left, int top, int right, int bottom, float depth)
         {
             var w = right - left;
@@ -138,7 +134,19 @@ namespace Robust.Client.Graphics.Clyde
             float U(float px) => px / texW;
             float V(float py) => (texH - py) / texH;
             bool Solid(int px, int py) =>
-                px >= left && px < right && py >= top && py < bottom && alpha[py * texW + px] >= AlphaSolid;
+                px >= left && px < right && py >= top && py < bottom && rgba[((py - top) * w + (px - left)) * 4 + 3] >= AlphaSolid;
+
+            // SS14 sprites have a 1 px dark outline. Side faces sample the first solid pixel inside it (up to two
+            // pixels in), so a locker's sides are locker-coloured instead of black.
+            int Inward(int edge, int step, Func<int, bool> solidAt)
+            {
+                for (var i = 2; i >= 1; i--)
+                {
+                    if (solidAt(edge + step * i))
+                        return edge + step * i;
+                }
+                return edge;
+            }
 
             // Front and back: one quad each, alpha-tested in the shader.
             AddQuad(verts,
@@ -154,15 +162,15 @@ namespace Robust.Client.Graphics.Clyde
                 new Vector2(U(left), V(top)), new Vector2(U(right), V(top)),
                 Vector3.UnitY, white);
 
-            // Top and bottom edges: horizontal runs of exposed pixels. U spans the run, V sits mid-pixel.
+            // Top and bottom edges: horizontal runs of exposed pixels, one quad per run and sample row.
             for (var py = top; py < bottom; py++)
             {
                 for (var side = 0; side < 2; side++)
                 {
                     var neighbour = side == 0 ? py - 1 : py + 1;
+                    var inwardStep = side == 0 ? 1 : -1;
                     var z = side == 0 ? Z(py) : Z(py + 1);
                     var n = side == 0 ? Vector3.UnitZ : -Vector3.UnitZ;
-                    var v = V(py + 0.5f);
                     var px = left;
                     while (px < right)
                     {
@@ -172,10 +180,14 @@ namespace Robust.Client.Graphics.Clyde
                             continue;
                         }
 
+                        var x0 = px;
+                        var sampleRow = Inward(py, inwardStep, r => Solid(x0, r));
                         var runStart = px;
-                        while (px < right && Solid(px, py) && !Solid(px, neighbour))
+                        while (px < right && Solid(px, py) && !Solid(px, neighbour)
+                               && Inward(py, inwardStep, r => Solid(px, r)) == sampleRow)
                             px++;
 
+                        var v = V(sampleRow + 0.5f);
                         AddQuad(verts,
                             new Vector3(X(runStart), y0, z), new Vector3(X(px), y0, z),
                             new Vector3(X(px), y1, z), new Vector3(X(runStart), y1, z),
@@ -186,15 +198,15 @@ namespace Robust.Client.Graphics.Clyde
                 }
             }
 
-            // Left and right edges: vertical runs. V spans the run, U sits mid-pixel.
+            // Left and right edges: vertical runs.
             for (var px = left; px < right; px++)
             {
                 for (var side = 0; side < 2; side++)
                 {
                     var neighbour = side == 0 ? px - 1 : px + 1;
+                    var inwardStep = side == 0 ? 1 : -1;
                     var x = side == 0 ? X(px) : X(px + 1);
                     var n = side == 0 ? -Vector3.UnitX : Vector3.UnitX;
-                    var u = U(px + 0.5f);
                     var py = top;
                     while (py < bottom)
                     {
@@ -204,10 +216,14 @@ namespace Robust.Client.Graphics.Clyde
                             continue;
                         }
 
+                        var y0Row = py;
+                        var sampleCol = Inward(px, inwardStep, c => Solid(c, y0Row));
                         var runStart = py;
-                        while (py < bottom && Solid(px, py) && !Solid(neighbour, py))
+                        while (py < bottom && Solid(px, py) && !Solid(neighbour, py)
+                               && Inward(px, inwardStep, c => Solid(c, py)) == sampleCol)
                             py++;
 
+                        var u = U(sampleCol + 0.5f);
                         AddQuad(verts,
                             new Vector3(x, y0, Z(py)), new Vector3(x, y1, Z(py)),
                             new Vector3(x, y1, Z(runStart)), new Vector3(x, y0, Z(runStart)),
@@ -272,6 +288,7 @@ namespace Robust.Client.Graphics.Clyde
             {
                 if (inst.Texture != bound)
                 {
+                    EnsureMipmaps(inst.Texture);
                     SetTexture(TextureUnit.Texture0, inst.Texture);
                     bound = inst.Texture;
                 }

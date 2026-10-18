@@ -25,7 +25,7 @@ namespace Robust.Client.Graphics.Clyde
     // World axes: X east, Y north, Z up. 1 tile = 1 m.
     internal partial class Clyde
     {
-        private const int World3DMaxLights = 32;
+        private const int World3DMaxLights = 48;
         private const float PixelsPerMeter3D = EyeManager.PixelsPerMeter;
 
         // Content draw depths we key off (see Content.Shared.DrawDepth). Relative to DrawDepth.Default.
@@ -114,9 +114,11 @@ in vec4 vColor;
 
 uniform sampler2D uTex;
 uniform int uLightCount;
-uniform vec4 uLightPosRadius[32];
-uniform vec4 uLightColor[32];
+uniform vec4 uLightPosRadius[48];
+uniform vec4 uLightColor[48];
 uniform vec3 uAmbient;
+uniform vec3 uAmbientGround;
+uniform float uExposure;
 uniform vec3 uCamPos;
 uniform vec3 uFogColor;
 uniform float uFogDistance;
@@ -150,20 +152,24 @@ void main()
     vec3 n = normalize(vNormal);
     if (!gl_FrontFacing) n = -n;
 
-    vec3 light = uAmbient;
+    // Hemisphere ambient: surfaces facing up catch more light than undersides, so every shape reads as solid.
+    vec3 light = mix(uAmbientGround, uAmbient, n.z * 0.5 + 0.5);
     for (int i = 0; i < uLightCount; i++)
     {
         vec3 d = uLightPosRadius[i].xyz - vWorld;
         float dist = length(d);
         float radius = uLightPosRadius[i].w;
         if (dist >= radius) continue;
-        float att = 1.0 - dist / radius;
-        att *= att;
-        float ndl = max(dot(n, d / max(dist, 0.0001)), 0.0) * 0.7 + 0.3;
+        // Smooth windowed falloff (no hard ring at the radius), soft wrap-around lighting.
+        float f = dist / radius;
+        float att = (1.0 - f * f);
+        att = att * att / (1.0 + 4.0 * f * f);
+        float ndl = clamp(dot(n, d / max(dist, 0.0001)) * 0.6 + 0.4, 0.0, 1.0);
         light += uLightColor[i].rgb * att * ndl;
     }
 
-    vec3 color = tex.rgb * light;
+    // Exposure tonemap: compresses bright pools and lifts shadows so the mixed art reads as one image.
+    vec3 color = vec3(1.0) - exp(-tex.rgb * light * uExposure);
     float fog = clamp(length(vWorld - uCamPos) / uFogDistance, 0.0, 1.0);
     color = mix(color, uFogColor, fog * fog);
     fragColor = vec4(color, tex.a);
@@ -199,6 +205,7 @@ void main()
             public uint Vao;
             public GLBuffer Vbo = default!;
             public int VertexCount;
+            public int CeilingStart;
             public GameTick BuiltTick;
             public int BuiltChunkCount = -1;
             public string DebugFirst = "";
@@ -306,7 +313,9 @@ void main()
             program.Use();
             SetMatrix(program, "uViewProj", viewProj);
             program.SetUniform("uCamPos", camPos);
-            program.SetUniform("uAmbient", new Vector3(0.09f, 0.09f, 0.11f));
+            program.SetUniform("uAmbient", new Vector3(0.20f, 0.21f, 0.25f));
+            program.SetUniform("uAmbientGround", new Vector3(0.07f, 0.07f, 0.08f));
+            program.SetUniform("uExposure", 1.6f);
             program.SetUniform("uFogColor", fog);
             program.SetUniform("uFogDistance", Math.Max(8f, _render3DDrawDistance));
             program.SetUniformTextureMaybe("uTex", TextureUnit.Texture0);
@@ -343,6 +352,7 @@ void main()
                 {
                     foreach (var batch in _world3DBatches)
                     {
+                        EnsureMipmaps(batch.Texture);
                         SetTexture(TextureUnit.Texture0, batch.Texture);
                         GL.DrawArrays(PrimitiveType.Triangles, batch.Start, batch.Count);
                         _debugStats.LastGLDrawCalls += 1;
@@ -379,6 +389,7 @@ void main()
             var box = Box2.CenteredAround(camFlat, new Vector2(range * 2, range * 2));
             _mapSystem.FindGridsIntersecting(mapId, box, ref _world3DGrids);
 
+            EnsureMipmaps(((ClydeTexture) _tileDefinitionManager.TileTextureAtlas).TextureId);
             SetTexture(TextureUnit.Texture0, _tileDefinitionManager.TileTextureAtlas);
             _world3DSeenGrids.Clear();
 
@@ -399,7 +410,14 @@ void main()
                     m.M31, m.M32, 0, 1);
                 SetMatrix(program, "uModel", model);
                 BindVertexArray(mesh.Vao);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexCount);
+                GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.CeilingStart);
+                if (mesh.VertexCount > mesh.CeilingStart)
+                {
+                    SetTexture(TextureUnit.Texture0, GetCeilingMaterial());
+                    GL.DrawArrays(PrimitiveType.Triangles, mesh.CeilingStart, mesh.VertexCount - mesh.CeilingStart);
+                    SetTexture(TextureUnit.Texture0, _tileDefinitionManager.TileTextureAtlas);
+                    _debugStats.LastGLDrawCalls += 1;
+                }
                 _debugStats.LastGLDrawCalls += 1;
             }
 
@@ -438,9 +456,15 @@ void main()
 
             var verts = new List<Vertex3D>(comp.ChunkCount * comp.ChunkSize * comp.ChunkSize * 12);
             var floorColor = new Vector4(1, 1, 1, 1);
-            var ceilColor = new Vector4(0.42f, 0.42f, 0.45f, 1);
+            var ceilColor = Vector4.One;
             var h = _render3DWallHeight;
             var ceilVerts = new List<Vertex3D>();
+            // Every ceiling shares one panel material (drawn as a second range of this mesh).
+            var (_, ceilTL, ceilBR) = ResolveUV(GetCeilingMaterial());
+            var ceilUv0 = ceilTL;
+            var ceilUv1 = new Vector2(ceilBR.X, ceilTL.Y);
+            var ceilUv2 = ceilBR;
+            var ceilUv3 = new Vector2(ceilTL.X, ceilBR.Y);
 
             var enumerator = _mapSystem.GetAllTilesEnumerator(grid.Owner, comp);
             while (enumerator.MoveNext(out var tileRef))
@@ -468,13 +492,13 @@ void main()
                 {
                     AddQuad(ceilVerts,
                         new Vector3(x, y + 1, h), new Vector3(x + 1, y + 1, h), new Vector3(x + 1, y, h), new Vector3(x, y, h),
-                        new Vector2(region.Left, region.Top), new Vector2(region.Right, region.Top),
-                        new Vector2(region.Right, region.Bottom), new Vector2(region.Left, region.Bottom),
+                        ceilUv0, ceilUv1, ceilUv2, ceilUv3,
                         -Vector3.UnitZ, ceilColor);
                 }
             }
 
             // Ceilings go after all floors so the two never share a draw range.
+            mesh.CeilingStart = verts.Count;
             verts.AddRange(ceilVerts);
 
             var span = CollectionsMarshal.AsSpan(verts);
@@ -747,22 +771,13 @@ void main()
         private void EmitBox(in SpriteData entry)
         {
             var sprite = entry.Sprite;
-            Texture? texture = null;
-            var color = Vector4.One;
 
-            // Use the first visible layer (the base wall/window/door sprite) as the material for every face.
-            for (var l = 0; l < sprite.Layers.Count && texture == null; l++)
-            {
-                var layer = sprite.Layers[l];
-                texture = GetLayerTexture(sprite, layer, Angle.Zero);
-                if (texture != null)
-                    color = LayerColor(sprite, layer);
-            }
-
-            if (texture == null)
+            // Generated panel material in the wall's own colours (see Clyde.World3DMaterials).
+            if (GetWallMaterial(sprite) is not var (material, _))
                 return;
 
-            var (ct, uvTL, uvBR) = ResolveUV(texture);
+            var color = sprite.Layers.Count > 0 ? LayerColor(sprite, sprite.Layers[0]) : Vector4.One;
+            var (ct, uvTL, uvBR) = ResolveUV(material);
             var uvBL = new Vector2(uvTL.X, uvBR.Y);
             var uvTR = new Vector2(uvBR.X, uvTL.Y);
 
@@ -787,7 +802,9 @@ void main()
             PushTiledSide(tex, ne, nw, z1, uvTL, uvBR, ny, color);
             PushTiledSide(tex, nw, sw, z1, uvTL, uvBR, -nx, color);
             PushTiledSide(tex, se, ne, z1, uvTL, uvBR, nx, color);
-            PushQuad(tex, Hi(sw), Hi(se), Hi(ne), Hi(nw), uvBL, uvBR, uvTR, uvTL, Vector3.UnitZ, color);
+            // The top meets the ceiling; keep it darker so wall tops seen from above read as wall, not floor.
+            PushQuad(tex, Hi(sw), Hi(se), Hi(ne), Hi(nw), uvBL, uvBR, uvTR, uvTL, Vector3.UnitZ,
+                color * new Vector4(0.6f, 0.6f, 0.6f, 1f));
         }
 
         /// <summary>
