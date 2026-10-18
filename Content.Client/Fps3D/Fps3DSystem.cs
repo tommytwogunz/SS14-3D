@@ -2,6 +2,8 @@ using Content.Client.IconSmoothing;
 using Content.Shared.Administration;
 using Content.Shared.Doors.Components;
 using Content.Shared.Fps3D;
+using Content.Shared.Standing;
+using System.Numerics;
 using Content.Shared.Placeable;
 using Content.Shared.Tag;
 using Robust.Client.Graphics;
@@ -33,6 +35,7 @@ public sealed class Fps3DSystem : EntitySystem
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
     [Dependency] private SharedFps3DLookSystem _look = default!;
+    [Dependency] private SharedHeight3DSystem _height = default!;
     [Dependency] private IOverlayManager _overlays = default!;
     [Dependency] private IEyeManager _eyeManager = default!;
     [Dependency] private Robust.Client.ResourceManagement.IResourceCache _cache = default!;
@@ -53,6 +56,13 @@ public sealed class Fps3DSystem : EntitySystem
 
     private static readonly TimeSpan LookSendInterval = TimeSpan.FromSeconds(1 / 30.0);
     private float _lastSentYaw = float.NaN;
+    private float _lastSentPitch = float.NaN;
+
+    private const float EyeStanding = 1.6f;
+    private const float EyeCrouching = 1.0f;
+    private const float EyeLying = 0.4f;
+    private float _eyeOffset = EyeStanding;
+    private readonly Dictionary<EntityUid, (float Z, TimeSpan Updated)> _displayZ = new();
     private TimeSpan _lastSentTime;
 
     // Smoothed 0..1 open amount per door, and the real time it was last updated.
@@ -74,6 +84,7 @@ public sealed class Fps3DSystem : EntitySystem
 
         _world3D.ShapeClassifier = Classify;
         _world3D.DoorOpenAmount = DoorOpenAmount;
+        _world3D.PoseProvider = GetPose;
         _clyde.MouseMove += OnMouseMove;
         _crosshair = new Fps3DCrosshairOverlay(EntityManager, _eyeManager, _ui, _world3D, _cache);
         _overlays.AddOverlay(_crosshair);
@@ -88,6 +99,8 @@ public sealed class Fps3DSystem : EntitySystem
         _overlays.RemoveOverlay(_crosshair);
         _world3D.ShapeClassifier = null;
         _world3D.DoorOpenAmount = null;
+        _world3D.PoseProvider = null;
+        _world3D.CameraHeight = float.NaN;
         SetMouseCaptured(false);
     }
 
@@ -110,7 +123,73 @@ public sealed class Fps3DSystem : EntitySystem
             _ignoreMotionFrames--;
 
         if (_enabled)
+        {
             SyncLookYaw();
+            UpdateCameraHeight(frameTime);
+        }
+    }
+
+    /// <summary>Camera follows the body: eye height eases between standing, crouching and lying; Z is the predicted height.</summary>
+    private void UpdateCameraHeight(float frameTime)
+    {
+        if (_player.LocalEntity is not { } player || !TryComp<Height3DComponent>(player, out var h))
+        {
+            _world3D.CameraHeight = float.NaN;
+            return;
+        }
+
+        var target = !IsStanding(player) ? EyeLying : h.Crouching ? EyeCrouching : EyeStanding;
+        _eyeOffset += (target - _eyeOffset) * (1f - MathF.Exp(-frameTime * 15f));
+        _world3D.CameraHeight = h.Z + _eyeOffset;
+    }
+
+    private bool IsStanding(EntityUid uid) => !TryComp<StandingStateComponent>(uid, out var standing) || standing.Standing;
+
+    private World3DPose GetPose(EntityUid uid)
+    {
+        if (!TryComp<Height3DComponent>(uid, out var h))
+            return World3DPose.Identity;
+
+        var pose = new World3DPose { Known = true, Z = SmoothedZ(uid, h.Z), TiltDirection = new Vector2(1, 0) };
+        switch (h.Kind)
+        {
+            case Height3DKind.Prop when h.Tilt > 0f:
+                pose.Tilt = h.Tilt;
+                pose.TiltDirection = h.TiltDirection.RotateVec(new Vector2(0, -1));
+                break;
+            case Height3DKind.Item when h.Spin != 0f:
+                pose.Tilt = h.Spin;
+                break;
+            case Height3DKind.Mob when !IsStanding(uid):
+                // Knocked down, crit or dead: lie down, falling forwards.
+                pose.Tilt = MathF.PI / 2f;
+                pose.TiltDirection = Transform(uid).LocalRotation.RotateVec(new Vector2(0, -1));
+                break;
+        }
+
+        return pose;
+    }
+
+    /// <summary>
+    ///     Remote entities only update at the server tick rate; ease their displayed height so falls look smooth.
+    ///     The local player is predicted every frame and shown as-is.
+    /// </summary>
+    private float SmoothedZ(EntityUid uid, float target)
+    {
+        if (uid == _player.LocalEntity)
+            return target;
+
+        var now = _timing.RealTime;
+        if (!_displayZ.TryGetValue(uid, out var entry) || MathF.Abs(entry.Z - target) > 3f)
+        {
+            _displayZ[uid] = (target, now);
+            return target;
+        }
+
+        var dt = (float) (now - entry.Updated).TotalSeconds;
+        var z = entry.Z + (target - entry.Z) * (1f - MathF.Exp(-dt * 25f));
+        _displayZ[uid] = (z, now);
+        return z;
     }
 
     private bool AnyWindowOpen()
@@ -140,16 +219,20 @@ public sealed class Fps3DSystem : EntitySystem
             return;
 
         var yaw = _world3D.Yaw;
-        _look.ApplyYaw(player, yaw);
+        var pitch = _world3D.Pitch;
+        _look.SetLookYaw(player, yaw);
+        _height.SetLookPitch(player, pitch);
 
         var now = _timing.RealTime;
-        if (Math.Abs(Angle.ShortestDistance(new Angle(yaw), new Angle(_lastSentYaw)).Theta) < 0.002
-            || now - _lastSentTime < LookSendInterval)
+        var yawChanged = !(Math.Abs(Angle.ShortestDistance(new Angle(yaw), new Angle(_lastSentYaw)).Theta) < 0.002);
+        var pitchChanged = !(MathF.Abs(pitch - _lastSentPitch) < 0.02f);
+        if (!yawChanged && !pitchChanged || now - _lastSentTime < LookSendInterval)
             return;
 
         _lastSentYaw = yaw;
+        _lastSentPitch = pitch;
         _lastSentTime = now;
-        RaiseNetworkEvent(new Fps3DLookMessage(yaw));
+        RaiseNetworkEvent(new Fps3DLookMessage(yaw, pitch));
     }
 
     private void SetMouseCaptured(bool captured)

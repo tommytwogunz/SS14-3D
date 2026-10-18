@@ -113,8 +113,46 @@ public sealed class Fps3DWhereCommand : IConsoleCommand
         if (_entities.TryGetComponent(uid, out InputMoverComponent? mover))
             line += $" moverRel={mover.RelativeRotation.Degrees:0.0} target={mover.TargetRelativeRotation.Degrees:0.0}";
 
+        if (_entities.TryGetComponent(uid, out Content.Shared.Fps3D.Height3DComponent? h))
+            line += $" z={h.Z:0.00} vz={h.VZ:0.00} crouch={h.Crouching} cam={_world3D.CameraHeight:0.00}";
         line += $" crosshair={(_world3D.CrosshairEntity is { } t ? _entities.ToPrettyString(t).ToString() : "none")} dist={_world3D.CrosshairDistance:0.00} mode={_world3D.CrosshairMode}";
         shell.WriteLine(line);
         Logger.GetSawmill("fps3d").Info(line);
+    }
+}
+
+/// <summary>Logs height state of nearby entities whose prototype ID contains the given text.</summary>
+[AnyCommand]
+public sealed class Fps3DTrackCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private IPlayerManager _player = default!;
+
+    public string Command => "fps3d_track";
+    public string Description => "Log height/tilt of nearby entities whose prototype ID contains <text>.";
+    public string Help => "Usage: fps3d_track <text>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length != 1 || _player.LocalEntity is not { } player)
+            return;
+
+        var xforms = _entities.System<SharedTransformSystem>();
+        var me = xforms.GetWorldPosition(player);
+        var query = _entities.EntityQueryEnumerator<Content.Shared.Fps3D.Height3DComponent, MetaDataComponent>();
+        while (query.MoveNext(out var uid, out var h, out var meta))
+        {
+            var id = meta.EntityPrototype?.ID ?? "";
+            if (!id.Contains(args[0], StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var pos = xforms.GetWorldPosition(uid);
+            if ((pos - me).Length() > 15f)
+                continue;
+
+            var line = $"track: {id} {uid} pos={pos} d={(pos - me).Length():0.0} z={h.Z:0.00} vz={h.VZ:0.00} tilt={h.Tilt:0.00} spin={h.Spin:0.00}";
+            shell.WriteLine(line);
+            Logger.GetSawmill("fps3d").Info(line);
+        }
     }
 }
