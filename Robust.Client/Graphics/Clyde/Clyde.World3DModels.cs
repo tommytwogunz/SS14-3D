@@ -53,6 +53,8 @@ namespace Robust.Client.Graphics.Clyde
             public int Count;
             public Matrix4x4 Model;
             public Vector4 Tint;
+            // Texture sub-rectangle for sprite decals; zero = whole texture.
+            public Vector4 UVRect;
         }
 
         private void InitWorld3DModels()
@@ -295,11 +297,13 @@ namespace Robust.Client.Graphics.Clyde
 
                 SetMatrix(program, "uModel", inst.Model);
                 program.SetUniform("uTint", inst.Tint);
+                program.SetUniform("uUVRect", inst.UVRect == Vector4.Zero ? new Vector4(0, 0, 1, 1) : inst.UVRect);
                 GL.DrawArrays(PrimitiveType.Triangles, inst.Start, inst.Count);
                 _debugStats.LastGLDrawCalls += 1;
             }
 
             program.SetUniform("uTint", Vector4.One);
+            program.SetUniform("uUVRect", new Vector4(0, 0, 1, 1));
             CheckGlError();
         }
 

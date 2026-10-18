@@ -89,6 +89,8 @@ in vec4 aColor;
 
 uniform mat4 uViewProj;
 uniform mat4 uModel;
+// Sub-rectangle of the bound texture the model's 0..1 UVs map into (sprite decals); (0, 0, 1, 1) otherwise.
+uniform vec4 uUVRect;
 
 out vec3 vWorld;
 out vec2 vUV;
@@ -99,7 +101,7 @@ void main()
 {
     vec4 world = uModel * vec4(aPos, 1.0);
     vWorld = world.xyz;
-    vUV = aUV;
+    vUV = uUVRect.xy + aUV * uUVRect.zw;
     vNormal = mat3(uModel) * aNormal;
     vColor = aColor;
     gl_Position = uViewProj * world;
@@ -319,6 +321,7 @@ void main()
             program.SetUniform("uFogColor", fog);
             program.SetUniform("uFogDistance", Math.Max(8f, _render3DDrawDistance));
             program.SetUniformTextureMaybe("uTex", TextureUnit.Texture0);
+            program.SetUniform("uUVRect", new Vector4(0, 0, 1, 1));
             program.SetUniform("uTint", Vector4.One);
             program.SetUniform("uDebugHeight", (_render3DDebugMask & 4) != 0 ? 1 : 0);
 
@@ -570,6 +573,13 @@ void main()
             for (var i = 0; i < count; i++)
             {
                 ref var entry = ref _drawingSpriteList[i];
+                if (_world3DShapes[i] != World3DShape.Hidden
+                    && _world3D.ModelProvider?.Invoke(entry.Uid) is { } meshRequest
+                    && EmitMeshModel(entry, meshRequest))
+                {
+                    continue;
+                }
+
                 AddPickForShape(entry, _world3DShapes[i]);
                 switch (_world3DShapes[i])
                 {

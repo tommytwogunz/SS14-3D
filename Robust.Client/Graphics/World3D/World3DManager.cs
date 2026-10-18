@@ -64,6 +64,12 @@ public interface IWorld3DManager
     /// </summary>
     Func<EntityUid, World3DPose>? PoseProvider { get; set; }
 
+    /// <summary>
+    ///     Optional hook for content: a real 3D mesh (Resources/Models3D) to draw for an entity instead of the model
+    ///     generated from its sprite. Null = use the sprite. The returned object may be reused between frames.
+    /// </summary>
+    Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
+
     /// <summary>Camera height above the floor this frame (player height + eye offset). NaN = render3d.eye_height.</summary>
     float CameraHeight { get; set; }
 
@@ -124,6 +130,7 @@ internal sealed class World3DManager : IWorld3DManager
     public float CrosshairDistance { get; internal set; } = float.PositiveInfinity;
 
     public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
+    public Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
     public float CameraHeight { get; set; } = float.NaN;
     public System.Numerics.Vector2? CameraPosition { get; set; }
 
@@ -198,4 +205,35 @@ public struct World3DBeam
     public bool FromViewModel;
 
     public Color Color;
+}
+
+/// <summary>Which mesh to draw for an entity, and how to colour and pose it (see <see cref="IWorld3DManager.ModelProvider"/>).</summary>
+public sealed class World3DModelRequest
+{
+    /// <summary>Model name: Resources/Models3D/&lt;name&gt;.json (+ its .png).</summary>
+    public string Model = "";
+
+    /// <summary>Colours for parts tinted "c0".."c7" (skin, hair, clothing, lamps...). Parts tinted "p0".."p2" use the sprite's palette.</summary>
+    public readonly Vector4[] Colors = { Vector4.One, Vector4.One, Vector4.One, Vector4.One, Vector4.One, Vector4.One, Vector4.One, Vector4.One };
+
+    /// <summary>
+    ///     Optional sprite layer key per colour slot (e.g. a clothing slot name or a body-part layer enum): when that layer
+    ///     exists and is visible, the slot takes the main colour of what the layer draws instead of <see cref="Colors"/>.
+    /// </summary>
+    public readonly object?[] ColorLayers = new object?[8];
+
+    /// <summary>Optional entity per colour slot (e.g. a worn item): the slot takes that entity's main sprite colour. Wins over <see cref="ColorLayers"/>.</summary>
+    public readonly EntityUid?[] ColorEntities = new EntityUid?[8];
+
+    /// <summary>Rotations (radians about X, Y, Z, applied in that order) for named bones, about each bone's pivot.</summary>
+    public readonly Dictionary<string, Vector3> Bones = new();
+
+    /// <summary>Visibility groups (a part's "group" in the model file) not to draw, e.g. "hat" when no hat is worn.</summary>
+    public readonly HashSet<string> Hidden = new();
+
+    /// <summary>Uniform scale.</summary>
+    public float Scale = 1f;
+
+    /// <summary>Extra yaw (radians) on top of the entity's rotation, e.g. to turn a model whose sprite faces another way.</summary>
+    public float Yaw;
 }
