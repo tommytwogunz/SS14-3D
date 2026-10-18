@@ -7,6 +7,7 @@ using Robust.Client.GameStates;
 using Robust.Client.Graphics;
 using Robust.Client.Graphics.Clyde;
 using Robust.Client.Graphics.FontManagement;
+using Robust.Client.Graphics.World3D;
 using Robust.Client.HWId;
 using Robust.Client.Input;
 using Robust.Client.Localization;
@@ -143,6 +144,7 @@ namespace Robust.Client
             deps.Register<IFontManager, FontManager>();
             deps.Register<IFontManagerInternal, FontManager>();
             deps.Register<IEyeManager, EyeManager>();
+            deps.Register<IWorld3DManager, World3DManager>();
             deps.Register<IPlacementManager, PlacementManager>();
             deps.Register<IOverlayManager, OverlayManager>();
             deps.Register<IOverlayManagerInternal, OverlayManager>();

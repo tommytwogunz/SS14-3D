@@ -706,6 +706,19 @@ namespace Robust.Client.Graphics.Clyde
                 var worldBounds = CalcWorldBounds(viewport);
                 var worldAABB = worldBounds.CalcBoundingBox();
 
+                if (ShouldRenderWorld3D(viewport))
+                {
+                    using (DebugGroup("World3D"))
+                    using (_prof.Group("World3D"))
+                    {
+                        RenderWorld3D(viewport, eye);
+                    }
+
+                    _lightingReady = false;
+                    _currentViewport = oldVp;
+                    return;
+                }
+
                 if (eye.Position.MapId != MapId.Nullspace)
                 {
                     using (DebugGroup("Lights"))

@@ -1117,6 +1117,36 @@ namespace Robust.Shared
         public static readonly CVarDef<bool> RenderTileEdges =
             CVarDef.Create("render.tile_edges", true, CVar.CLIENTONLY);
 
+        /// <summary>
+        /// Render the world as a first-person 3D view instead of the top-down 2D view.
+        /// </summary>
+        public static readonly CVarDef<bool> Render3DEnabled =
+            CVarDef.Create("render3d.enabled", false, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+        /// <summary>Vertical field of view of the 3D view, in degrees.</summary>
+        public static readonly CVarDef<float> Render3DFov =
+            CVarDef.Create("render3d.fov", 75f, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+        /// <summary>Height of walls and the ceiling in the 3D view, in meters (1 tile = 1 m).</summary>
+        public static readonly CVarDef<float> Render3DWallHeight =
+            CVarDef.Create("render3d.wall_height", 2.5f, CVar.CLIENTONLY);
+
+        /// <summary>Camera height above the floor in the 3D view, in meters.</summary>
+        public static readonly CVarDef<float> Render3DEyeHeight =
+            CVarDef.Create("render3d.eye_height", 1.6f, CVar.CLIENTONLY);
+
+        /// <summary>How far around the camera entities are drawn in the 3D view, in meters.</summary>
+        public static readonly CVarDef<float> Render3DDrawDistance =
+            CVarDef.Create("render3d.draw_distance", 28f, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+        /// <summary>Draw a ceiling over floor tiles in the 3D view.</summary>
+        public static readonly CVarDef<bool> Render3DCeiling =
+            CVarDef.Create("render3d.ceiling", true, CVar.CLIENTONLY | CVar.ARCHIVE);
+
+        /// <summary>Debug bitmask of 3D passes to draw: 1 floors/ceilings, 2 entities.</summary>
+        public static readonly CVarDef<int> Render3DDebugMask =
+            CVarDef.Create("render3d.debug_mask", 3, CVar.CLIENTONLY);
+
         /*
          *  CONTROLS
          */
