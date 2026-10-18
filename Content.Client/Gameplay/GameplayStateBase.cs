@@ -260,7 +260,9 @@ namespace Content.Client.Gameplay
             {
                 State = kArgs.State,
                 Coordinates = coordinates,
-                ScreenCoordinates = kArgs.PointerLocation,
+                // First-person: the logical cursor is the crosshair (see Clyde.MouseScreenPosition); report the click there
+                // too, or systems comparing the two (DragDropSystem's deadzone) see a phantom mouse move and start a drag.
+                ScreenCoordinates = _world3D.CrosshairMode ? _inputManager.MouseScreenPosition : kArgs.PointerLocation,
                 Uid = entityToClick ?? default,
             }; // TODO make entityUid nullable
 

@@ -426,13 +426,28 @@ public sealed class Fps3DTpGridCommand : IConsoleCommand
         }
 
         var xformSys = _entities.System<SharedTransformSystem>();
-        if (_entities.GetComponent<TransformComponent>(player).GridUid is not { } grid)
+
+        // Use the station (the largest grid on this map), not whatever small grid we stand on: right after a round
+        // starts you're on the arrivals shuttle, and map-file coordinates are station coordinates.
+        var mapId = _entities.GetComponent<TransformComponent>(player).MapID;
+        EntityUid? grid = null;
+        var bestChunks = -1;
+        var grids = _entities.EntityQueryEnumerator<Robust.Shared.Map.Components.MapGridComponent, TransformComponent>();
+        while (grids.MoveNext(out var gridUid, out var gridComp, out var gridXform))
         {
-            shell.WriteLine("Not on a grid.");
+            if (gridXform.MapID != mapId || gridComp.ChunkCount <= bestChunks)
+                continue;
+            bestChunks = gridComp.ChunkCount;
+            grid = gridUid;
+        }
+
+        if (grid == null)
+        {
+            shell.WriteLine("No grid on this map.");
             return;
         }
 
-        var world = System.Numerics.Vector2.Transform(new System.Numerics.Vector2(x, y), xformSys.GetWorldMatrix(grid));
+        var world = System.Numerics.Vector2.Transform(new System.Numerics.Vector2(x, y), xformSys.GetWorldMatrix(grid.Value));
         shell.ExecuteCommand(string.Format(inv, "tp {0} {1}", world.X, world.Y));
     }
 }

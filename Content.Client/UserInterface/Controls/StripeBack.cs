@@ -100,6 +100,12 @@ namespace Content.Client.UserInterface.Controls
 
             var padSize = HasMargins ? PadSize : 0;
 
+            // Before layout (e.g. a window's first frame) the control can be shorter than its own edges, which
+            // would build inverted boxes and trip UIBox2's validation in debug builds.
+            var edges = ((HasTopEdge ? 1 : 0) + (HasBottomEdge ? 1 : 0)) * (padSize + EdgeSize) * UIScale;
+            if (PixelHeight < edges)
+                return;
+
             if (HasTopEdge)
             {
                 centerBox += (0, (padSize + EdgeSize) * UIScale, 0, 0);

@@ -79,7 +79,7 @@ public sealed class Fps3DKeyCommand : IConsoleCommand
         {
             State = state,
             Coordinates = coords,
-            ScreenCoordinates = default,
+            ScreenCoordinates = _input.MouseScreenPosition, // what a real click carries (the crosshair in 3D)
             Uid = _world3D.CrosshairEntity ?? default,
         };
 
@@ -139,9 +139,14 @@ public sealed class Fps3DTrackCommand : IConsoleCommand
 
         var xforms = _entities.System<SharedTransformSystem>();
         var me = xforms.GetWorldPosition(player);
-        var query = _entities.EntityQueryEnumerator<Content.Shared.Fps3D.Height3DComponent, MetaDataComponent>();
-        while (query.MoveNext(out var uid, out var h, out var meta))
+        var heights = _entities.GetEntityQuery<Content.Shared.Fps3D.Height3DComponent>();
+        var containers = _entities.System<Robust.Shared.Containers.SharedContainerSystem>();
+        var query = _entities.EntityQueryEnumerator<MetaDataComponent, TransformComponent>();
+        while (query.MoveNext(out var uid, out var meta, out var xform))
         {
+            if (xform.MapUid == null || containers.IsEntityInContainer(uid))
+                continue;
+            heights.TryGetComponent(uid, out var h);
             var id = meta.EntityPrototype?.ID ?? "";
             if (!id.Contains(args[0], StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -150,7 +155,8 @@ public sealed class Fps3DTrackCommand : IConsoleCommand
             if ((pos - me).Length() > 15f)
                 continue;
 
-            var line = $"track: {id} {uid} pos={pos} d={(pos - me).Length():0.0} z={h.Z:0.00} vz={h.VZ:0.00} tilt={h.Tilt:0.00} spin={h.Spin:0.00}";
+            var grot = xform.GridUid is { } g ? xforms.GetWorldRotation(g).Degrees : 0.0;
+            var line = $"track: {id} {uid} pos={pos} d={(pos - me).Length():0.0} z={h?.Z ?? 0f:0.00} vz={h?.VZ ?? 0f:0.00} tilt={h?.Tilt ?? 0f:0.00} spin={h?.Spin ?? 0f:0.00} grot={grot:0.0}";
             shell.WriteLine(line);
             Logger.GetSawmill("fps3d").Info(line);
         }
@@ -212,5 +218,195 @@ public sealed class Fps3DCloseUiCommand : IConsoleCommand
         {
             child.Visible = false;
         }
+    }
+}
+
+/// <summary>
+///     Logs the gameplay state of the crosshair target (or "self"): anchoring, damage, mob/door state, light,
+///     solutions, hands, combat mode. Used by the stage 6 gameplay checks.
+/// </summary>
+[AnyCommand]
+public sealed class Fps3DInspectCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private IPlayerManager _player = default!;
+    [Dependency] private IWorld3DManager _world3D = default!;
+
+    public string Command => "fps3d_inspect";
+    public string Description => "Log gameplay state of the crosshair target, or 'self'.";
+    public string Help => "Usage: fps3d_inspect [self]";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        EntityUid? target = args switch
+        {
+            ["self"] => _player.LocalEntity,
+            [var id] when int.TryParse(id, out var n) => new EntityUid(n),
+            _ => _world3D.CrosshairEntity,
+        };
+        if (target is not { } uid || !_entities.EntityExists(uid))
+        {
+            Logger.GetSawmill("fps3d").Info("inspect: nothing");
+            return;
+        }
+
+        var e = _entities;
+        var parts = new List<string> { $"inspect: {e.ToPrettyString(uid)}" };
+        var xform = e.GetComponent<TransformComponent>(uid);
+        parts.Add($"anchored={xform.Anchored}");
+
+        if (e.TryGetComponent(uid, out Content.Shared.Damage.Components.DamageableComponent? dmg))
+            parts.Add($"damage={e.System<Content.Shared.Damage.Systems.DamageableSystem>().GetTotalDamage((uid, dmg))}");
+        if (e.TryGetComponent(uid, out Content.Shared.Mobs.Components.MobStateComponent? mob))
+            parts.Add($"mob={mob.CurrentState}");
+        if (e.TryGetComponent(uid, out Content.Shared.Standing.StandingStateComponent? standing))
+            parts.Add($"standing={standing.Standing}");
+        if (e.TryGetComponent(uid, out Content.Shared.Doors.Components.DoorComponent? door))
+            parts.Add($"door={door.State}");
+        if (e.TryGetComponent(uid, out Robust.Client.GameObjects.PointLightComponent? light))
+            parts.Add($"light={light.Enabled}");
+        if (e.TryGetComponent(uid, out Content.Shared.CombatMode.CombatModeComponent? combat))
+            parts.Add($"combat={combat.IsInCombatMode}");
+
+        var solutions = e.System<Content.Shared.Chemistry.EntitySystems.SharedSolutionContainerSystem>();
+        foreach (var (name, soln) in solutions.EnumerateSolutions(uid))
+            parts.Add($"solution[{name}]={soln.Comp.Solution.Volume}/{soln.Comp.Solution.MaxVolume}");
+
+        var hands = e.System<Content.Shared.Hands.EntitySystems.SharedHandsSystem>();
+        if (hands.TryGetActiveItem(uid, out var held))
+            parts.Add($"active={e.ToPrettyString(held.Value)}");
+
+        if (e.TryGetComponent(uid, out Content.Shared.Stacks.StackComponent? stack))
+            parts.Add($"stack={stack.Count}");
+
+        var line = string.Join(" ", parts);
+        shell.WriteLine(line);
+        Logger.GetSawmill("fps3d").Info(line);
+    }
+}
+
+/// <summary>Logs which windows and popups are open (to check UIs work in first person).</summary>
+[AnyCommand]
+public sealed class Fps3DUiCommand : IConsoleCommand
+{
+    [Dependency] private Robust.Client.UserInterface.IUserInterfaceManager _ui = default!;
+
+    public string Command => "fps3d_ui";
+    public string Description => "Log open windows and popups.";
+    public string Help => "Usage: fps3d_ui";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        var open = new List<string>();
+        foreach (var child in _ui.WindowRoot.Children)
+        {
+            if (child.Visible)
+                open.Add(child is Robust.Client.UserInterface.CustomControls.DefaultWindow w ? $"{child.GetType().Name}('{w.Title}')" : child.GetType().Name);
+        }
+
+        foreach (var child in _ui.PopupRoot.Children)
+        {
+            if (child.Visible)
+                open.Add($"popup:{child.GetType().Name}");
+        }
+
+        foreach (var child in _ui.ModalRoot.Children)
+        {
+            if (child.Visible)
+                open.Add($"modal:{child.GetType().Name}");
+        }
+
+        var line = $"ui: [{string.Join(", ", open)}]";
+        shell.WriteLine(line);
+        Logger.GetSawmill("fps3d").Info(line);
+    }
+}
+
+/// <summary>Triggers one of the local player's actions by prototype (like clicking it on the hotbar).</summary>
+[AnyCommand]
+public sealed class Fps3DActionCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private IPlayerManager _player = default!;
+
+    public string Command => "fps3d_action";
+    public string Description => "Trigger the local player's action whose prototype ID contains <text> (e.g. CombatMode).";
+    public string Help => "Usage: fps3d_action <text>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length != 1 || _player.LocalEntity is not { } player)
+            return;
+
+        var actions = _entities.System<Content.Client.Actions.ActionsSystem>();
+        foreach (var action in actions.GetActions(player))
+        {
+            var id = _entities.GetComponent<MetaDataComponent>(action).EntityPrototype?.ID ?? "";
+            if (!id.Contains(args[0], StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            actions.TriggerAction(action);
+            Logger.GetSawmill("fps3d").Info($"action: triggered {id}");
+            return;
+        }
+
+        Logger.GetSawmill("fps3d").Info($"action: none matching {args[0]}");
+    }
+}
+
+/// <summary>Logs what SS14's 2D click test (used by melee and interactions) finds at the crosshair point.</summary>
+[AnyCommand]
+public sealed class Fps3DClickTestCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private IPlayerManager _player = default!;
+    [Dependency] private IWorld3DManager _world3D = default!;
+    [Dependency] private Robust.Client.State.IStateManager _state = default!;
+    [Dependency] private Robust.Client.Graphics.IEyeManager _eye = default!;
+    [Dependency] private Robust.Client.Input.IInputManager _input = default!;
+
+    public string Command => "fps3d_clicktest";
+    public string Description => "Log the 2D clicked entity at the crosshair point and its distance.";
+    public string Help => "Usage: fps3d_clicktest";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        var mouse = _eye.PixelToMap(_input.MouseScreenPosition);
+        var point = _world3D.CrosshairPoint;
+        EntityUid? clicked = null;
+        if (_state.CurrentState is Content.Client.Gameplay.GameplayStateBase screen)
+            clicked = screen.GetClickedEntity(mouse);
+        var me = _player.LocalEntity is { } p ? _entities.System<SharedTransformSystem>().GetMapCoordinates(p).Position : default;
+        var line = $"clicktest: mouseMap={mouse} crosshairPoint={point} crosshairEnt={(_world3D.CrosshairEntity is { } c ? _entities.ToPrettyString(c).ToString() : "none")} clicked2D={(clicked is { } k ? _entities.ToPrettyString(k).ToString() : "none")} distFromMe={(mouse.Position - me).Length():0.00}";
+        shell.WriteLine(line);
+        Logger.GetSawmill("fps3d").Info(line);
+    }
+}
+
+/// <summary>Clicks the item in an inventory slot, as clicking it on the inventory bar does (e.g. opens the PDA).</summary>
+[AnyCommand]
+public sealed class Fps3DSlotCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private IPlayerManager _player = default!;
+
+    public string Command => "fps3d_slot";
+    public string Description => "Activate the item in an inventory slot (like clicking it on the inventory bar).";
+    public string Help => "Usage: fps3d_slot <slot id, e.g. id>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length != 1 || _player.LocalEntity is not { } player)
+            return;
+
+        var inventory = _entities.System<Content.Client.Inventory.ClientInventorySystem>();
+        if (!inventory.TryGetSlotEntity(player, args[0], out var item))
+        {
+            shell.WriteLine($"Nothing in slot {args[0]}.");
+            return;
+        }
+
+        inventory.UIInventoryActivateItem(args[0], player);
+        Logger.GetSawmill("fps3d").Info($"slot {args[0]}: activated {_entities.ToPrettyString(item.Value)}");
     }
 }
