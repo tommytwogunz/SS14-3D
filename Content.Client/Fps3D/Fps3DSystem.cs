@@ -1,6 +1,7 @@
 using Content.Client.IconSmoothing;
 using Content.Shared.Administration;
 using Content.Shared.Doors.Components;
+using Content.Shared.Placeable;
 using Content.Shared.Tag;
 using Robust.Client.Graphics;
 using Robust.Client.Graphics.World3D;
@@ -40,6 +41,7 @@ public sealed class Fps3DSystem : EntitySystem
     private EntityQuery<IconSmoothComponent> _smoothQuery;
     private EntityQuery<DoorComponent> _doorQuery;
     private EntityQuery<PhysicsComponent> _physicsQuery;
+    private EntityQuery<PlaceableSurfaceComponent> _surfaceQuery;
 
     public override void Initialize()
     {
@@ -48,6 +50,7 @@ public sealed class Fps3DSystem : EntitySystem
         _smoothQuery = GetEntityQuery<IconSmoothComponent>();
         _doorQuery = GetEntityQuery<DoorComponent>();
         _physicsQuery = GetEntityQuery<PhysicsComponent>();
+        _surfaceQuery = GetEntityQuery<PlaceableSurfaceComponent>();
 
         _world3D.ShapeClassifier = Classify;
         _clyde.MouseMove += OnMouseMove;
@@ -103,15 +106,34 @@ public sealed class Fps3DSystem : EntitySystem
     private World3DShape Classify(EntityUid uid)
     {
         if (_doorQuery.HasComponent(uid))
-            return IsSolid(uid) ? World3DShape.Box : World3DShape.Hidden;
+            return IsSolid(uid) ? World3DShape.Door : World3DShape.Hidden;
 
-        if (_smoothQuery.TryGetComponent(uid, out var smooth) && smooth.Key is "walls" or "windows")
-            return World3DShape.Box;
+        if (_smoothQuery.TryGetComponent(uid, out var smooth))
+        {
+            switch (smooth.Key)
+            {
+                case "walls" or "windows":
+                    return World3DShape.Box;
+                case "table":
+                    return World3DShape.Table;
+                case "grilles":
+                    return World3DShape.Fence;
+            }
+        }
 
+        // Windows without full-tile smoothing are directional panes on one tile edge.
         if (_tags.HasTag(uid, WindowTag))
-            return World3DShape.Box;
+            return World3DShape.Pane;
+
+        if (_surfaceQuery.HasComponent(uid) && IsAnchored(uid))
+            return World3DShape.Table;
 
         return World3DShape.Auto;
+    }
+
+    private bool IsAnchored(EntityUid uid)
+    {
+        return Transform(uid).Anchored;
     }
 
     private bool IsSolid(EntityUid uid)
@@ -137,6 +159,44 @@ public sealed class Fps3DLookCommand : IConsoleCommand
             _world3D.Pitch = MathHelper.DegreesToRadians(pitch);
 
         shell.WriteLine($"yaw {MathHelper.RadiansToDegrees(_world3D.Yaw):0.#} pitch {MathHelper.RadiansToDegrees(_world3D.Pitch):0.#}");
+    }
+}
+
+/// <summary>
+///     Dev helper: teleport (via the admin <c>tp</c> command) to coordinates on the grid you are standing on,
+///     e.g. positions copied from a map file.
+/// </summary>
+[AnyCommand]
+public sealed class Fps3DTpGridCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+    [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
+
+    public string Command => "fps3d_tpgrid";
+    public string Description => "Teleport to grid-local coordinates on your current grid (needs admin).";
+    public string Help => "Usage: fps3d_tpgrid <x> <y>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (args.Length != 2
+            || !float.TryParse(args[0], inv, out var x)
+            || !float.TryParse(args[1], inv, out var y)
+            || _player.LocalEntity is not { } player)
+        {
+            shell.WriteLine(Help);
+            return;
+        }
+
+        var xformSys = _entities.System<SharedTransformSystem>();
+        if (_entities.GetComponent<TransformComponent>(player).GridUid is not { } grid)
+        {
+            shell.WriteLine("Not on a grid.");
+            return;
+        }
+
+        var world = System.Numerics.Vector2.Transform(new System.Numerics.Vector2(x, y), xformSys.GetWorldMatrix(grid));
+        shell.ExecuteCommand(string.Format(inv, "tp {0} {1}", world.X, world.Y));
     }
 }
 
