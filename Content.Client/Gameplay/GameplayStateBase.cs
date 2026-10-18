@@ -42,6 +42,7 @@ namespace Content.Client.Gameplay
         [Dependency] private IViewVariablesManager _vvm = default!;
         [Dependency] private IConsoleHost _conHost = default!;
         [Dependency] private IConfigurationManager _configurationManager = default!;
+        [Dependency] private Robust.Client.Graphics.World3D.IWorld3DManager _world3D = default!;
 
         private ClickableEntityComparer _comparer = default!;
 
@@ -61,6 +62,8 @@ namespace Content.Client.Gameplay
             switch (control)
             {
                 case IViewportControl vp:
+                    if (_world3D.CrosshairMode)
+                        return _world3D.CrosshairEntity;
                     if (_inputManager.MouseScreenPosition.IsValid)
                         return GetClickedEntity(vp.PixelToMap(_inputManager.MouseScreenPosition.Position));
                     return null;
@@ -236,6 +239,11 @@ namespace Content.Client.Gameplay
                 {
                     entityToClick = GetClickedEntity(mousePosWorld);
                 }
+                // First-person: the viewport already resolved the click through the crosshair ray
+                // (Clyde.World3DPick); use the entity that ray hit instead of a 2D sprite test at the hit point.
+                if (_world3D.CrosshairMode)
+                    entityToClick = _world3D.CrosshairEntity;
+
                 var transformSystem = _entitySystemManager.GetEntitySystem<SharedTransformSystem>();
                 var mapSystem = _entitySystemManager.GetEntitySystem<MapSystem>();
 

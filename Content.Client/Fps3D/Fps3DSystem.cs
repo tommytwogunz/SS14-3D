@@ -1,6 +1,7 @@
 using Content.Client.IconSmoothing;
 using Content.Shared.Administration;
 using Content.Shared.Doors.Components;
+using Content.Shared.Fps3D;
 using Content.Shared.Placeable;
 using Content.Shared.Tag;
 using Robust.Client.Graphics;
@@ -30,6 +31,13 @@ public sealed class Fps3DSystem : EntitySystem
     [Dependency] private IWorld3DManager _world3D = default!;
     [Dependency] private TagSystem _tags = default!;
     [Dependency] private IGameTiming _timing = default!;
+    [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
+    [Dependency] private SharedFps3DLookSystem _look = default!;
+    [Dependency] private IOverlayManager _overlays = default!;
+    [Dependency] private IEyeManager _eyeManager = default!;
+    [Dependency] private Robust.Client.ResourceManagement.IResourceCache _cache = default!;
+
+    private Fps3DCrosshairOverlay _crosshair = default!;
 
     private static readonly ProtoId<TagPrototype> WindowTag = "Window";
 
@@ -38,7 +46,14 @@ public sealed class Fps3DSystem : EntitySystem
 
     private bool _enabled;
     private bool _mouseCaptured;
+
+    /// <summary>Dev: aim through the crosshair even without mouse capture (fps3d_crosshairtest).</summary>
+    public bool ForceCrosshair;
     private int _ignoreMotionFrames;
+
+    private static readonly TimeSpan LookSendInterval = TimeSpan.FromSeconds(1 / 30.0);
+    private float _lastSentYaw = float.NaN;
+    private TimeSpan _lastSentTime;
 
     // Smoothed 0..1 open amount per door, and the real time it was last updated.
     private readonly Dictionary<EntityUid, (float Amount, TimeSpan Updated)> _doorOpen = new();
@@ -60,7 +75,9 @@ public sealed class Fps3DSystem : EntitySystem
         _world3D.ShapeClassifier = Classify;
         _world3D.DoorOpenAmount = DoorOpenAmount;
         _clyde.MouseMove += OnMouseMove;
-        Subs.CVar(_cfg, CVars.Render3DEnabled, v => _enabled = v, true);
+        _crosshair = new Fps3DCrosshairOverlay(EntityManager, _eyeManager, _ui, _world3D, _cache);
+        _overlays.AddOverlay(_crosshair);
+        Subs.CVar(_cfg, CVars.Render3DEnabled, v => _enabled = _crosshair.Enabled = v, true);
     }
 
     public override void Shutdown()
@@ -68,6 +85,7 @@ public sealed class Fps3DSystem : EntitySystem
         base.Shutdown();
 
         _clyde.MouseMove -= OnMouseMove;
+        _overlays.RemoveOverlay(_crosshair);
         _world3D.ShapeClassifier = null;
         _world3D.DoorOpenAmount = null;
         SetMouseCaptured(false);
@@ -77,17 +95,61 @@ public sealed class Fps3DSystem : EntitySystem
     {
         base.FrameUpdate(frameTime);
 
-        // Hold Left Alt to free the cursor for the UI (inventory, hotbar, menus).
-        // Also release while typing in chat or any other focused text field.
+        // Hold Left Alt to free the cursor for the UI (inventory, hotbar, menus), like GMod's context key.
+        // Also release while typing, or while any window or popup (context menu, UIs) is open.
         var wantCapture = _enabled
                           && _clyde.MainWindow.IsFocused
                           && !_input.IsKeyDown(Keyboard.Key.Alt)
-                          && _ui.KeyboardFocused == null;
+                          && _ui.KeyboardFocused == null
+                          && !AnyWindowOpen();
 
         SetMouseCaptured(wantCapture);
+        _world3D.CrosshairMode = _mouseCaptured || (_enabled && ForceCrosshair);
 
         if (_ignoreMotionFrames > 0)
             _ignoreMotionFrames--;
+
+        if (_enabled)
+            SyncLookYaw();
+    }
+
+    private bool AnyWindowOpen()
+    {
+        foreach (var child in _ui.WindowRoot.Children)
+        {
+            if (child.Visible)
+                return true;
+        }
+
+        foreach (var child in _ui.PopupRoot.Children)
+        {
+            if (child.Visible)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    ///     Makes WASD follow the camera: predict locally every frame, and tell the server (rate-limited)
+    ///     whenever the yaw changes.
+    /// </summary>
+    private void SyncLookYaw()
+    {
+        if (_player.LocalEntity is not { } player)
+            return;
+
+        var yaw = _world3D.Yaw;
+        _look.ApplyYaw(player, yaw);
+
+        var now = _timing.RealTime;
+        if (Math.Abs(Angle.ShortestDistance(new Angle(yaw), new Angle(_lastSentYaw)).Theta) < 0.002
+            || now - _lastSentTime < LookSendInterval)
+            return;
+
+        _lastSentYaw = yaw;
+        _lastSentTime = now;
+        RaiseNetworkEvent(new Fps3DLookMessage(yaw));
     }
 
     private void SetMouseCaptured(bool captured)
