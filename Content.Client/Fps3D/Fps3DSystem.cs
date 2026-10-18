@@ -13,6 +13,7 @@ using Robust.Shared.Console;
 using Robust.Shared.Input;
 using Robust.Shared.Physics.Components;
 using Robust.Shared.Prototypes;
+using Robust.Shared.Timing;
 
 namespace Content.Client.Fps3D;
 
@@ -28,6 +29,7 @@ public sealed class Fps3DSystem : EntitySystem
     [Dependency] private IUserInterfaceManager _ui = default!;
     [Dependency] private IWorld3DManager _world3D = default!;
     [Dependency] private TagSystem _tags = default!;
+    [Dependency] private IGameTiming _timing = default!;
 
     private static readonly ProtoId<TagPrototype> WindowTag = "Window";
 
@@ -37,6 +39,9 @@ public sealed class Fps3DSystem : EntitySystem
     private bool _enabled;
     private bool _mouseCaptured;
     private int _ignoreMotionFrames;
+
+    // Smoothed 0..1 open amount per door, and the real time it was last updated.
+    private readonly Dictionary<EntityUid, (float Amount, TimeSpan Updated)> _doorOpen = new();
 
     private EntityQuery<IconSmoothComponent> _smoothQuery;
     private EntityQuery<DoorComponent> _doorQuery;
@@ -53,6 +58,7 @@ public sealed class Fps3DSystem : EntitySystem
         _surfaceQuery = GetEntityQuery<PlaceableSurfaceComponent>();
 
         _world3D.ShapeClassifier = Classify;
+        _world3D.DoorOpenAmount = DoorOpenAmount;
         _clyde.MouseMove += OnMouseMove;
         Subs.CVar(_cfg, CVars.Render3DEnabled, v => _enabled = v, true);
     }
@@ -63,6 +69,7 @@ public sealed class Fps3DSystem : EntitySystem
 
         _clyde.MouseMove -= OnMouseMove;
         _world3D.ShapeClassifier = null;
+        _world3D.DoorOpenAmount = null;
         SetMouseCaptured(false);
     }
 
@@ -106,7 +113,7 @@ public sealed class Fps3DSystem : EntitySystem
     private World3DShape Classify(EntityUid uid)
     {
         if (_doorQuery.HasComponent(uid))
-            return IsSolid(uid) ? World3DShape.Door : World3DShape.Hidden;
+            return World3DShape.Door;
 
         if (_smoothQuery.TryGetComponent(uid, out var smooth))
         {
@@ -129,6 +136,38 @@ public sealed class Fps3DSystem : EntitySystem
             return World3DShape.Table;
 
         return World3DShape.Auto;
+    }
+
+    /// <summary>Dev override for every door's open amount (fps3d_doortest); negative = off.</summary>
+    public float DoorTestAmount = -1f;
+
+    private float DoorOpenAmount(EntityUid uid)
+    {
+        if (DoorTestAmount >= 0f)
+            return DoorTestAmount;
+
+        if (!_doorQuery.TryGetComponent(uid, out var door))
+            return 0f;
+
+        var opening = door.State is DoorState.Open or DoorState.Opening;
+        var target = opening ? 1f : 0f;
+        var now = _timing.RealTime;
+
+        if (!_doorOpen.TryGetValue(uid, out var entry))
+        {
+            // First sight of this door: snap to its current state instead of animating.
+            _doorOpen[uid] = (target, now);
+            return target;
+        }
+
+        var duration = opening ? door.OpeningAnimationTime : door.ClosingAnimationTime;
+        var step = (float) ((now - entry.Updated).TotalSeconds / Math.Max(0.05, duration.TotalSeconds));
+        var amount = entry.Amount < target
+            ? Math.Min(target, entry.Amount + step)
+            : Math.Max(target, entry.Amount - step);
+
+        _doorOpen[uid] = (amount, now);
+        return amount;
     }
 
     private bool IsAnchored(EntityUid uid)
@@ -235,5 +274,26 @@ public sealed class Fps3DToggleCommand : IConsoleCommand
 
         _cfg.SetCVar(CVars.Render3DEnabled, value);
         shell.WriteLine($"3D view {(value ? "on — hold Left Alt to use the mouse cursor" : "off")}");
+    }
+}
+
+[AnyCommand]
+public sealed class Fps3DDoorTestCommand : IConsoleCommand
+{
+    [Dependency] private IEntitySystemManager _systems = default!;
+
+    public string Command => "fps3d_doortest";
+    public string Description => "Force every door's 3D open amount (0..1); -1 returns to normal.";
+    public string Help => "Usage: fps3d_doortest <amount>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length != 1 || !float.TryParse(args[0], System.Globalization.CultureInfo.InvariantCulture, out var amount))
+        {
+            shell.WriteLine(Help);
+            return;
+        }
+
+        _systems.GetEntitySystem<Fps3DSystem>().DoorTestAmount = amount;
     }
 }
