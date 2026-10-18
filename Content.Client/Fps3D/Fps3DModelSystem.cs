@@ -23,29 +23,58 @@ public sealed partial class Fps3DModelSystem : EntitySystem
     [Dependency] private SpriteSystem _sprite = default!;
     [Dependency] private Content.Shared.Inventory.InventorySystem _inventory = default!;
     [Dependency] private IGameTiming _timing = default!;
+    [Dependency] private SharedMapSystem _map = default!;
 
-    /// <summary>Base prototype → model. The first base found walking up the entity's parents wins.</summary>
-    private static readonly (string Base, string Model)[] ModelsByBase =
+    /// <summary>
+    ///     Base prototype → model and scale. Walking up the entity's parents, the closest listed base wins; an empty
+    ///     model keeps the sprite model.
+    /// </summary>
+    private static readonly (string Base, string Model, float Scale)[] ModelsByBase =
     {
-        ("LockerBase", "locker"),
-        ("ClosetBase", "locker"),
-        ("CrateBaseWeldable", "crate"),
-        ("CrateBaseSecure", "crate"),
-        ("VendingMachine", "vending"),
-        ("BaseComputer", "computer"),
-        ("ComfyChair", "armchair"),
-        ("OfficeChairBase", "officechair"),
-        ("StoolBase", "stool"),
-        ("SteelBench", ""), // benches are wide: keep their sprite model
-        ("WoodenBench", ""),
-        ("ChairBase", "chair"),
-        ("UnanchoredChairBase", "chair"),
-        ("Bed", "bed"),
-        ("GasCanister", "canister"),
-        ("PottedPlantBase", "plant"),
+        ("LockerBase", "locker", 1f),
+        ("ClosetBase", "locker", 1f),
+        ("CrateBaseWeldable", "crate", 1f),
+        ("CrateBaseSecure", "crate", 1f),
+        ("VendingMachine", "vending", 1f),
+        ("BaseComputer", "computer", 1f),
+        ("ComfyChair", "armchair", 1f),
+        ("OfficeChairBase", "officechair", 1f),
+        ("StoolBase", "stool", 1f),
+        ("SteelBench", "bench", 1f),
+        ("WoodenBench", "bench", 1f),
+        ("ChairBase", "chair", 1f),
+        ("UnanchoredChairBase", "chair", 1f),
+        ("Bed", "bed", 1f),
+        ("GasCanister", "canister", 1f),
+        ("PottedPlantBase", "plant", 1f),
+        ("TableBase", "table", 1f),
+        // Floor machines: a cabinet showing the machine's own sprite on its front.
+        ("BaseLathe", "machine", 1f),
+        ("ChemMaster", "machine", 1f),
+        ("ChemDispenser", "machine", 1f),
+        ("BaseSMES", "machine", 1f),
+        ("BaseSubstation", "machine", 1f),
+        ("ResearchAndDevelopmentServer", "machine", 1f),
+        ("CloningPod", "machine", 1f),
+        ("MedicalScanner", "machine", 1f),
+        // Animals: archetype models scaled per species.
+        ("MobCorgiBase", "quadruped", 0.75f),
+        ("MobCat", "quadruped", 0.6f),
+        ("MobFox", "quadruped", 0.65f),
+        ("MobPig", "quadruped", 0.85f),
+        ("MobPossum", "quadruped", 0.5f),
+        ("MobRaccoon", "quadruped", 0.55f),
+        ("MobGoat", "quadruped", 1.0f),
+        ("MobCow", "quadruped", 1.45f),
+        ("MobMouse", "quadruped", 0.28f),
+        ("MobHamster", "quadruped", 0.25f),
+        ("MobLizard", "quadruped", 0.4f),
+        ("MobChicken", "bird", 0.7f),
+        ("MobDuckMallard", "bird", 0.7f),
+        ("BaseMobCarp", "fish", 1f),
     };
 
-    private readonly Dictionary<string, string?> _modelByProto = new();
+    private readonly Dictionary<string, (string? Model, float Scale)> _modelByProto = new();
     private readonly Dictionary<EntityUid, World3DModelRequest> _requests = new();
     private readonly Dictionary<EntityUid, (float Phase, float Swing, TimeSpan Updated)> _walk = new();
 
@@ -80,26 +109,28 @@ public sealed partial class Fps3DModelSystem : EntitySystem
         if (!TryComp(uid, out MetaDataComponent? meta) || meta.EntityPrototype is not { } proto)
             return null;
 
-        if (!_modelByProto.TryGetValue(proto.ID, out var model))
+        if (!_modelByProto.TryGetValue(proto.ID, out var found))
         {
-            model = FindModel(proto);
-            _modelByProto[proto.ID] = model;
+            found = FindModel(proto);
+            _modelByProto[proto.ID] = found;
         }
 
-        // Characters: any mob drawn with the humanoid body layers.
-        if (model == null && HasComp<Content.Shared.Mobs.Components.MobStateComponent>(uid) && TryComp(uid, out SpriteComponent? sprite)
+        // Characters: any mob drawn with the humanoid body layers (monkeys are small ones).
+        if (found.Model == null && HasComp<Content.Shared.Mobs.Components.MobStateComponent>(uid) && TryComp(uid, out SpriteComponent? sprite)
             && _sprite.LayerMapTryGet((uid, sprite), HumanoidVisualLayers.Chest, out _, false))
         {
-            model = "human";
-            _modelByProto[proto.ID] = model;
+            var monkey = System.Linq.Enumerable.Any(_proto.EnumerateAllParents<EntityPrototype>(proto.ID, includeSelf: true),
+                p => p.id == "MobBaseMonkey");
+            found = ("human", monkey ? 0.6f : 1f);
+            _modelByProto[proto.ID] = found;
         }
 
-        if (model == null)
+        if (found.Model is not { } model)
             return null;
 
         if (!_requests.TryGetValue(uid, out var request))
         {
-            request = new World3DModelRequest { Model = model };
+            request = new World3DModelRequest { Model = model, Scale = found.Scale };
             _requests[uid] = request;
         }
 
@@ -107,6 +138,42 @@ public sealed partial class Fps3DModelSystem : EntitySystem
         {
             case "human":
                 UpdateHuman(uid, request);
+                break;
+            case "quadruped":
+            {
+                var (phase, swing, time) = Walk(uid, 3.5f / found.Scale);
+                var s = MathF.Sin(phase) * swing;
+                request.Bones["legFL"] = new Vector3(s, 0, 0);
+                request.Bones["legBR"] = new Vector3(s, 0, 0);
+                request.Bones["legFR"] = new Vector3(-s, 0, 0);
+                request.Bones["legBL"] = new Vector3(-s, 0, 0);
+                request.Bones["tail"] = new Vector3(0.3f, 0, MathF.Sin(time * 6f) * 0.35f);
+                request.Bones["head"] = new Vector3(MathF.Sin(phase * 2f) * swing * 0.1f, 0, 0);
+                break;
+            }
+            case "bird":
+            {
+                var (phase, swing, time) = Walk(uid, 6f);
+                var s = MathF.Sin(phase) * swing;
+                request.Bones["legL"] = new Vector3(s, 0, 0);
+                request.Bones["legR"] = new Vector3(-s, 0, 0);
+                request.Bones["head"] = new Vector3(MathF.Sin(phase * 2f) * swing * 0.4f, 0, 0);
+                var flap = swing * MathF.Sin(time * 14f) * 0.4f;
+                request.Bones["wingL"] = new Vector3(0, -flap, 0);
+                request.Bones["wingR"] = new Vector3(0, flap, 0);
+                break;
+            }
+            case "fish":
+            {
+                var (_, swing, time) = Walk(uid, 2f);
+                var sway = MathF.Sin(time * (4f + swing * 8f)) * (0.25f + swing * 0.3f);
+                request.Bones["tail"] = new Vector3(0, 0, sway);
+                request.Bones["finL"] = new Vector3(0, MathF.Sin(time * 5f) * 0.3f, 0);
+                request.Bones["finR"] = new Vector3(0, -MathF.Sin(time * 5f) * 0.3f, 0);
+                break;
+            }
+            case "table":
+                UpdateTableLegs(uid, request);
                 break;
             case "crate":
                 var crateOpen = TryComp(uid, out EntityStorageComponent? crateStorage) && crateStorage.Open;
@@ -127,19 +194,72 @@ public sealed partial class Fps3DModelSystem : EntitySystem
         return request;
     }
 
-    private string? FindModel(EntityPrototype proto)
+    private (string? Model, float Scale) FindModel(EntityPrototype proto)
     {
         // Includes abstract parents (most bases, e.g. LockerBase, are abstract).
         foreach (var (parentId, _) in _proto.EnumerateAllParents<EntityPrototype>(proto.ID, includeSelf: true))
         {
-            foreach (var (baseId, model) in ModelsByBase)
+            foreach (var (baseId, model, scale) in ModelsByBase)
             {
                 if (parentId == baseId)
-                    return model.Length > 0 ? model : null;
+                    return (model.Length > 0 ? model : null, scale);
             }
         }
 
-        return null;
+        return (null, 1f);
+    }
+
+    /// <summary>
+    ///     Walk cycle for an entity: phase advances with distance moved (<paramref name="stride"/> radians per metre),
+    ///     swing (0..0.7) eases in and out with speed; also returns a running time for idle motion.
+    /// </summary>
+    private (float Phase, float Swing, float Time) Walk(EntityUid uid, float stride)
+    {
+        var now = _timing.RealTime;
+        _walk.TryGetValue(uid, out var walk);
+        var dt = walk.Updated == TimeSpan.Zero ? 0f : (float) Math.Min((now - walk.Updated).TotalSeconds, 0.1);
+        var speed = TryComp(uid, out PhysicsComponent? body) ? body.LinearVelocity.Length() : 0f;
+        walk.Phase += speed * dt * stride;
+        var targetSwing = Math.Clamp(speed / 4.5f, 0f, 1f) * 0.7f;
+        walk.Swing += (targetSwing - walk.Swing) * (1f - MathF.Exp(-dt * 10f));
+        walk.Updated = now;
+        _walk[uid] = walk;
+        // Offset idle motion per entity so a room of animals doesn't move in lockstep.
+        return (walk.Phase, walk.Swing, (float) now.TotalSeconds + uid.Id % 97 * 0.37f);
+    }
+
+    /// <summary>
+    ///     Joined tables share corners: a table draws a corner leg only when none of the three neighbouring tiles that
+    ///     meet at that corner holds a table, so a run of tables is one surface with legs at its outer corners.
+    /// </summary>
+    private void UpdateTableLegs(EntityUid uid, World3DModelRequest request)
+    {
+        var xform = Transform(uid);
+        if (xform.GridUid is not { } grid || !TryComp(grid, out Robust.Shared.Map.Components.MapGridComponent? gridComp))
+            return;
+
+        var tile = _map.TileIndicesFor(grid, gridComp, xform.Coordinates);
+
+        bool Table(int dx, int dy)
+        {
+            var anchored = _map.GetAnchoredEntitiesEnumerator(grid, gridComp, tile + new Vector2i(dx, dy));
+            while (anchored.MoveNext(out var other))
+            {
+                if (TryComp(other, out MetaDataComponent? m) && m.EntityPrototype is { } p
+                    && (_modelByProto.TryGetValue(p.ID, out var f) ? f : FindModel(p)).Model == "table")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Model corners are in the table's own frame; tables are anchored unrotated on the grid.
+        SetHidden(request, "legNE", Table(1, 0) || Table(0, 1) || Table(1, 1));
+        SetHidden(request, "legNW", Table(-1, 0) || Table(0, 1) || Table(-1, 1));
+        SetHidden(request, "legSE", Table(1, 0) || Table(0, -1) || Table(1, -1));
+        SetHidden(request, "legSW", Table(-1, 0) || Table(0, -1) || Table(-1, -1));
     }
 
     /// <summary>
@@ -173,18 +293,8 @@ public sealed partial class Fps3DModelSystem : EntitySystem
         SetHidden(request, "hair", hair == null || hat != null);
         SetHidden(request, "pack", pack == null);
 
-        // Walk cycle: phase advances with distance moved; swing eases in and out with speed.
-        var now = _timing.RealTime;
-        _walk.TryGetValue(uid, out var walk);
-        var dt = walk.Updated == TimeSpan.Zero ? 0f : (float) Math.Min((now - walk.Updated).TotalSeconds, 0.1);
-        var speed = TryComp(uid, out PhysicsComponent? body) ? body.LinearVelocity.Length() : 0f;
-        walk.Phase += speed * dt * 2.6f;
-        var targetSwing = Math.Clamp(speed / 4.5f, 0f, 1f) * 0.7f;
-        walk.Swing += (targetSwing - walk.Swing) * (1f - MathF.Exp(-dt * 10f));
-        walk.Updated = now;
-        _walk[uid] = walk;
-
-        var s = MathF.Sin(walk.Phase) * walk.Swing;
+        var (phase, swing, _) = Walk(uid, 2.6f / request.Scale);
+        var s = MathF.Sin(phase) * swing;
         request.Bones["legL"] = new Vector3(s, 0, 0);
         request.Bones["legR"] = new Vector3(-s, 0, 0);
         request.Bones["armL"] = new Vector3(-s * 0.8f, 0, 0);

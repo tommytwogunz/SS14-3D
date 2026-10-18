@@ -1,5 +1,5 @@
 """Furniture and fixtures. Each function builds one model's parts and returns its texture size (or None)."""
-from m3d import box, cyl, sphere, slats, paint, fixed, decal
+from m3d import box, cyl, sphere, slats, paint, fixed, decal, group
 import math
 
 MODELS = {}
@@ -191,4 +191,52 @@ def plant():
         s = rnd.uniform(0.12, 0.2)
         sphere(f"leaf{i}", s, (math.cos(a) * r, math.sin(a) * r, z), leaf, "p0", scale=(1, 1, 1.3), segs=10)
     cyl("stem", 0.025, 0.5, (0, 0, 0.55), fixed("stem", (0.2, 0.3, 0.1)), "none", verts=8)
+    return 512
+
+
+@model
+def table():
+    """Table: 1 m top (surface at 0.9 m, where the game puts items) with an edge apron and four legs; each leg is its
+    own visibility group (legNE, legNW, legSE, legSW) so joined tables can drop the legs they share."""
+    top = paint(0.9, grime=0.35, wear=0.6)
+    trim = paint(0.7, wear=0.8)
+    box("top", (1.0, 1.0, 0.05), (0, 0, 0.875), top, "p0", bevel=0.008)
+    box("apron", (0.94, 0.94, 0.08), (0, 0, 0.81), trim, "p1", bevel=0.01)
+    for name, x, y in (("legNE", 1, 1), ("legNW", -1, 1), ("legSE", 1, -1), ("legSW", -1, -1)):
+        group(name)
+        box(name, (0.06, 0.06, 0.8), (x * 0.43, y * 0.43, 0.4), trim, "p1", bevel=0.01)
+        box(name + "foot", (0.08, 0.08, 0.02), (x * 0.43, y * 0.43, 0.01), _dark_metal(), "none", bevel=0.004)
+    group(None)
+    return 512
+
+
+@model
+def bench():
+    """Bench facing -Y: a full-width slatted seat with a backrest and two side frames."""
+    seat = paint(0.9, grime=0.35, wear=0.5)
+    frame = paint(0.65, rough=0.3, wear=0.8)
+    for i in range(3):
+        box(f"slat{i}", (0.98, 0.13, 0.04), (0, -0.15 + i * 0.15, 0.45), seat, "p0", bevel=0.01)
+    for i in range(2):
+        box(f"back{i}", (0.98, 0.04, 0.11), (0, 0.24, 0.62 + i * 0.16), seat, "p0", rot=(-0.12, 0, 0), bevel=0.01)
+    for x in (-0.44, 0.44):
+        box(f"side{x}", (0.05, 0.5, 0.05), (x, 0, 0.42), frame, "p1", bevel=0.01)
+        box(f"legf{x}", (0.05, 0.05, 0.43), (x, -0.2, 0.215), frame, "p1", bevel=0.01)
+        box(f"legb{x}", (0.05, 0.05, 0.85), (x, 0.24, 0.425), frame, "p1", rot=(-0.1, 0, 0), bevel=0.01)
+    return 512
+
+
+@model
+def machine():
+    """Floor machine (lathes, fabricators, servers): a panelled cabinet whose front shows the machine's own sprite."""
+    w, d, h = 0.94, 0.86, 1.3
+    body = paint(0.9)
+    dark = _dark_metal()
+    box("cabinet", (w, d, h - 0.06), (0, 0.02, 0.06 + (h - 0.06) / 2), body, "p0", bevel=0.03)
+    box("plinth", (w - 0.06, d - 0.06, 0.07), (0, 0.02, 0.035), dark, "none")
+    for x in (-w / 2 - 0.003, w / 2 + 0.003):
+        box(f"sidepanel{x}", (0.01, d - 0.16, h - 0.4), (x, 0.04, h / 2), paint(0.8), "p1", bevel=0.004)
+        slats(f"sidevent{x}", 4, (0.012, d - 0.3, 0.02), (x, 0.04, h - 0.32), (0, 0, -0.05), dark, "none")
+    slats("topvent", 5, (w - 0.3, 0.05, 0.012), (0, -0.2, h + 0.001), (0, 0.1, 0), dark, "none")
+    decal("front", w - 0.04, h - 0.08, (0, -d / 2 + 0.02 - 0.006, 0.06 + (h - 0.08) / 2 + 0.01))
     return 512
