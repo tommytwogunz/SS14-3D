@@ -76,6 +76,11 @@ namespace Robust.Client.Graphics.Clyde
         {
             get
             {
+                // First-person crosshair aiming: the logical cursor is the crosshair at the window centre, whether or
+                // not the OS cursor is captured (so systems that read the mouse, e.g. melee and guns, aim with it).
+                if (_render3DEnabled && _world3D is { CrosshairMode: true } && _mainWindow != null)
+                    return new ScreenCoordinates((Vector2) _mainWindow.FramebufferSize / 2f, _mainWindow.Id);
+
                 var window = _currentHoveredWindow;
                 if (window == null)
                     return default;

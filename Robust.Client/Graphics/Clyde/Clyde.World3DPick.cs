@@ -61,7 +61,8 @@ namespace Robust.Client.Graphics.Clyde
                     AddPick(entry.Uid, TileCenterWorld(entry), along, across, 0f, _render3DWallHeight);
                     break;
                 case World3DShape.Fence:
-                    var (fAlong, fAcross) = PanelAxes(entry, 0.05f);
+                    // Thin to look at, but give it some depth so it can be targeted edge-on.
+                    var (fAlong, fAcross) = PanelAxes(entry, 0.15f);
                     AddPick(entry.Uid, TileCenterWorld(entry), fAlong, fAcross, 0f, _render3DWallHeight);
                     break;
                 case World3DShape.Pane:
