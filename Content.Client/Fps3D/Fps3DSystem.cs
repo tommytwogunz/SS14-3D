@@ -1,3 +1,5 @@
+using System.Linq;
+using Robust.Shared.Map;
 using Content.Client.IconSmoothing;
 using Content.Shared.Administration;
 using Content.Shared.Doors.Components;
@@ -24,7 +26,7 @@ namespace Content.Client.Fps3D;
 ///     Client glue for the engine's first-person 3D view (render3d.enabled):
 ///     mouse-look, and telling the renderer which entities are walls, windows and doors.
 /// </summary>
-public sealed class Fps3DSystem : EntitySystem
+public sealed partial class Fps3DSystem : EntitySystem
 {
     [Dependency] private IClyde _clyde = default!;
     [Dependency] private IConfigurationManager _cfg = default!;
@@ -59,7 +61,19 @@ public sealed class Fps3DSystem : EntitySystem
     public bool ForceCrosshair;
     private int _ignoreMotionFrames;
 
-    private static readonly TimeSpan LookSendInterval = TimeSpan.FromSeconds(1 / 30.0);
+    // Camera interpolation between the player's positions at the last two ticks (see RecordTickPosition).
+    private const float MaxCameraStep = 2f;
+    private System.Numerics.Vector2 _prevTickPos;
+    private System.Numerics.Vector2 _tickPos;
+    private float _prevTickZ;
+    private float _tickZ;
+    private MapId _tickMap = MapId.Nullspace;
+    private EntityUid? _lookEntity;
+    private Robust.Shared.Timing.GameTick _recordedTick;
+    // fps3d_camlog: per-frame camera positions for measuring smoothness.
+    private double _camLogUntil;
+    private readonly List<(System.Numerics.Vector2 Pos, double Time, uint Tick, float Frac, System.Numerics.Vector2 Raw)> _camLog = new();
+
     private float _lastSentYaw = float.NaN;
     private float _lastSentPitch = float.NaN;
 
@@ -68,7 +82,6 @@ public sealed class Fps3DSystem : EntitySystem
     private const float EyeLying = 0.4f;
     private float _eyeOffset = EyeStanding;
     private readonly Dictionary<EntityUid, (float Z, TimeSpan Updated)> _displayZ = new();
-    private TimeSpan _lastSentTime;
 
     // Smoothed 0..1 open amount per door, and the real time it was last updated.
     private readonly Dictionary<EntityUid, (float Amount, TimeSpan Updated)> _doorOpen = new();
@@ -90,6 +103,8 @@ public sealed class Fps3DSystem : EntitySystem
         _world3D.ShapeClassifier = Classify;
         _world3D.DoorOpenAmount = DoorOpenAmount;
         _world3D.PoseProvider = GetPose;
+        // Look events and the camera's tick samples must land before this tick's movement.
+        UpdatesBefore.Add(typeof(Robust.Shared.Physics.Systems.SharedPhysicsSystem));
         _clyde.MouseMove += OnMouseMove;
         _crosshair = new Fps3DCrosshairOverlay(EntityManager, _eyeManager, _ui, _world3D, _cache);
         _overlays.AddOverlay(_crosshair);
@@ -106,6 +121,7 @@ public sealed class Fps3DSystem : EntitySystem
         _world3D.ShapeClassifier = null;
         _world3D.DoorOpenAmount = null;
         _world3D.PoseProvider = null;
+        _world3D.CameraPosition = null;
         _world3D.CameraHeight = float.NaN;
         SetMouseCaptured(false);
     }
@@ -131,10 +147,77 @@ public sealed class Fps3DSystem : EntitySystem
 
         if (_enabled)
         {
-            SyncLookYaw();
+            UpdateCameraPosition();
             UpdateCameraHeight(frameTime);
             UpdateViewModelAndBeams();
         }
+        else
+        {
+            _world3D.CameraPosition = null;
+        }
+
+        RecordCamera();
+    }
+
+    /// <summary>Starts recording the camera position every frame for <paramref name="seconds"/> (fps3d_camlog).</summary>
+    private bool _camLogVerbose;
+
+    public void StartCameraLog(float seconds, bool verbose = false)
+    {
+        _camLogVerbose = verbose;
+        _camLog.Clear();
+        _camLogUntil = _timing.RealTime.TotalSeconds + seconds;
+    }
+
+    private void RecordCamera()
+    {
+        if (_camLogUntil <= 0)
+            return;
+
+        var now = _timing.RealTime.TotalSeconds;
+        var shown = _world3D.CameraPosition ?? _eyeManager.CurrentEye.Position.Position;
+        var raw = _player.LocalEntity is { } me ? _transform.GetWorldPosition(me) : default;
+        var frac = (float) (_timing.TickRemainder.TotalSeconds / _timing.TickPeriod.TotalSeconds);
+        _camLog.Add((shown, now, _timing.CurTick.Value, frac, raw));
+        if (now < _camLogUntil)
+            return;
+
+        _camLogUntil = 0;
+        if (_camLogVerbose)
+        {
+            var t0 = _camLog[0].Time;
+            foreach (var s in _camLog)
+                Logger.GetSawmill("fps3d").Info($"camlog-frame: t={(s.Time - t0) * 1000:0} tick={s.Tick} frac={s.Frac:0.00} cam={s.Pos.X:0.000},{s.Pos.Y:0.000} raw={s.Raw.X:0.000},{s.Raw.Y:0.000}");
+        }
+
+        // Per-frame camera speed; a smooth walk has every frame near the median speed.
+        var speeds = new List<float>();
+        var back = 0;
+        var overall = _camLog[^1].Pos - _camLog[0].Pos;
+        for (var i = 1; i < _camLog.Count; i++)
+        {
+            var dt = (float) (_camLog[i].Time - _camLog[i - 1].Time);
+            if (dt <= 0)
+                continue;
+            var step = _camLog[i].Pos - _camLog[i - 1].Pos;
+            speeds.Add(step.Length() / dt);
+            if (System.Numerics.Vector2.Dot(step, overall) < -1e-4f)
+                back++;
+        }
+
+        if (speeds.Count < 3)
+            return;
+        var sorted = speeds.OrderBy(s => s).ToList();
+        var median = sorted[sorted.Count / 2];
+        var jerks = speeds.Count(s => MathF.Abs(s - median) > 0.25f * MathF.Max(median, 0.5f));
+        var still = speeds.Count(s => s < 0.05f * MathF.Max(median, 0.5f));
+        var rms = MathF.Sqrt(speeds.Average(s => (s - median) * (s - median))) / MathF.Max(median, 0.01f);
+        var dts = new List<double>();
+        for (var i = 1; i < _camLog.Count; i++)
+            dts.Add((_camLog[i].Time - _camLog[i - 1].Time) * 1000);
+        var fps = dts.Count / ((_camLog[^1].Time - _camLog[0].Time));
+        var hitches = dts.Count(d => d > 40);
+        Logger.GetSawmill("fps3d").Info($"camlog: frames={speeds.Count} fps={fps:0} maxframe={dts.Max():0}ms hitches>40ms={hitches} median={median:0.00}m/s rms={rms * 100:0}% jerks={jerks} stalled={still} backwards={back} moved={overall.Length():0.00}m");
     }
 
     /// <summary>Camera follows the body: eye height eases between standing, crouching and lying; Z is the predicted height.</summary>
@@ -148,7 +231,9 @@ public sealed class Fps3DSystem : EntitySystem
 
         var target = !IsStanding(player) ? EyeLying : h.Crouching ? EyeCrouching : EyeStanding;
         _eyeOffset += (target - _eyeOffset) * (1f - MathF.Exp(-frameTime * 15f));
-        _world3D.CameraHeight = h.Z + _eyeOffset;
+        var fraction = (float) (_timing.TickRemainder.TotalSeconds / _timing.TickPeriod.TotalSeconds);
+        var z = _tickMap != MapId.Nullspace ? float.Lerp(_prevTickZ, _tickZ, Math.Clamp(fraction, 0f, 1f)) : h.Z;
+        _world3D.CameraHeight = z + _eyeOffset;
     }
 
     private bool IsStanding(EntityUid uid) => !TryComp<StandingStateComponent>(uid, out var standing) || standing.Standing;
@@ -210,7 +295,7 @@ public sealed class Fps3DSystem : EntitySystem
         var query = EntityQueryEnumerator<PhysGunComponent, TransformComponent>();
         while (query.MoveNext(out var gunUid, out var gun, out var gunXform))
         {
-            if (gun.Held is not { } held || !TryComp<TransformComponent>(held, out var heldXform)
+            if (gun.Held is not { } held || !TryComp(held, out TransformComponent? heldXform)
                 || !_container.TryGetContainingContainer((gunUid, null, null), out var container))
                 continue;
 
@@ -255,30 +340,88 @@ public sealed class Fps3DSystem : EntitySystem
         return false;
     }
 
+    public override void Update(float frameTime)
+    {
+        base.Update(frameTime);
+
+        // Ticks only run once each for real; replays re-apply the predictive look events by themselves.
+        if (!_enabled || !_timing.IsFirstTimePredicted)
+            return;
+
+        SyncLookYaw();
+    }
+
     /// <summary>
-    ///     Makes WASD follow the camera: predict locally every frame, and tell the server (rate-limited)
-    ///     whenever the yaw changes.
+    ///     Makes WASD follow the camera. The look direction goes out as a predictive event stamped with this tick,
+    ///     so the server turns the mover at the same tick the client predicted it (a separately timed message made
+    ///     the server walk along a slightly older heading, and every correction shook the camera).
     /// </summary>
     private void SyncLookYaw()
     {
         if (_player.LocalEntity is not { } player)
             return;
 
+        if (player != _lookEntity)
+        {
+            _lookEntity = player;
+            _lastSentYaw = float.NaN;
+            _lastSentPitch = float.NaN;
+        }
+
         var yaw = _world3D.Yaw;
         var pitch = _world3D.Pitch;
-        _look.SetLookYaw(player, yaw);
-        _height.SetLookPitch(player, pitch);
-
-        var now = _timing.RealTime;
-        var yawChanged = !(Math.Abs(Angle.ShortestDistance(new Angle(yaw), new Angle(_lastSentYaw)).Theta) < 0.002);
+        var yawChanged = !(Math.Abs(Angle.ShortestDistance(new Angle(yaw), new Angle(_lastSentYaw)).Theta) < 0.0005);
         var pitchChanged = !(MathF.Abs(pitch - _lastSentPitch) < 0.02f);
-        if (!yawChanged && !pitchChanged || now - _lastSentTime < LookSendInterval)
+        if (!yawChanged && !pitchChanged)
             return;
 
         _lastSentYaw = yaw;
         _lastSentPitch = pitch;
-        _lastSentTime = now;
-        RaiseNetworkEvent(new Fps3DLookMessage(yaw, pitch));
+        RaisePredictiveEvent(new Fps3DLookMessage(yaw, pitch));
+    }
+
+    /// <summary>
+    ///     The camera's own interpolation: the player's position at the start of each tick, eased between the last
+    ///     two by the tick fraction (one tick behind, like Source's client interpolation). A server correction then
+    ///     becomes part of one tick's motion instead of a snap, and the camera never stalls between ticks.
+    /// </summary>
+    public void RecordTickPosition()
+    {
+        if (!_enabled || !_timing.IsFirstTimePredicted || _timing.CurTick == _recordedTick)
+            return;
+        _recordedTick = _timing.CurTick;
+
+        if (_player.LocalEntity is not { } player || !TryComp(player, out TransformComponent? xform))
+            return;
+
+        var pos = _transform.GetMapCoordinates(player, xform);
+        if (pos.MapId != _tickMap || (pos.Position - _tickPos).LengthSquared() > MaxCameraStep * MaxCameraStep)
+            _prevTickPos = pos.Position; // Teleport or map change: snap.
+        else
+            _prevTickPos = _tickPos;
+
+        var z = TryComp<Height3DComponent>(player, out var h) ? h.Z : 0f;
+        _prevTickZ = MathF.Abs(z - _tickZ) > MaxCameraStep ? z : _tickZ;
+        _tickZ = z;
+
+        _tickPos = pos.Position;
+        _tickMap = pos.MapId;
+    }
+
+    private void UpdateCameraPosition()
+    {
+        if (_player.LocalEntity is not { } player
+            || _tickMap == MapId.Nullspace
+            || _eyeManager.CurrentEye.Position.MapId != _tickMap
+            || !TryComp(player, out TransformComponent? xform)
+            || xform.MapID != _tickMap)
+        {
+            _world3D.CameraPosition = null;
+            return;
+        }
+
+        var fraction = (float) (_timing.TickRemainder.TotalSeconds / _timing.TickPeriod.TotalSeconds);
+        _world3D.CameraPosition = System.Numerics.Vector2.Lerp(_prevTickPos, _tickPos, Math.Clamp(fraction, 0f, 1f));
     }
 
     private void SetMouseCaptured(bool captured)
@@ -380,7 +523,7 @@ public sealed class Fps3DSystem : EntitySystem
 }
 
 [AnyCommand]
-public sealed class Fps3DLookCommand : IConsoleCommand
+public sealed partial class Fps3DLookCommand : IConsoleCommand
 {
     [Dependency] private IWorld3DManager _world3D = default!;
 
@@ -404,7 +547,7 @@ public sealed class Fps3DLookCommand : IConsoleCommand
 ///     e.g. positions copied from a map file.
 /// </summary>
 [AnyCommand]
-public sealed class Fps3DTpGridCommand : IConsoleCommand
+public sealed partial class Fps3DTpGridCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
@@ -453,7 +596,7 @@ public sealed class Fps3DTpGridCommand : IConsoleCommand
 }
 
 [AnyCommand]
-public sealed class Fps3DDumpCommand : IConsoleCommand
+public sealed partial class Fps3DDumpCommand : IConsoleCommand
 {
     [Dependency] private IWorld3DManager _world3D = default!;
 
@@ -469,7 +612,7 @@ public sealed class Fps3DDumpCommand : IConsoleCommand
 }
 
 [AnyCommand]
-public sealed class Fps3DToggleCommand : IConsoleCommand
+public sealed partial class Fps3DToggleCommand : IConsoleCommand
 {
     [Dependency] private IConfigurationManager _cfg = default!;
 
@@ -491,7 +634,7 @@ public sealed class Fps3DToggleCommand : IConsoleCommand
 }
 
 [AnyCommand]
-public sealed class Fps3DDoorTestCommand : IConsoleCommand
+public sealed partial class Fps3DDoorTestCommand : IConsoleCommand
 {
     [Dependency] private IEntitySystemManager _systems = default!;
 
@@ -508,5 +651,23 @@ public sealed class Fps3DDoorTestCommand : IConsoleCommand
         }
 
         _systems.GetEntitySystem<Fps3DSystem>().DoorTestAmount = amount;
+    }
+}
+
+/// <summary>Samples the player's position for the camera at the end of each tick, after movement and physics.</summary>
+public sealed partial class Fps3DCameraTickSystem : EntitySystem
+{
+    [Dependency] private Fps3DSystem _fps = default!;
+
+    public override void Initialize()
+    {
+        base.Initialize();
+        UpdatesAfter.Add(typeof(Robust.Shared.Physics.Systems.SharedPhysicsSystem));
+    }
+
+    public override void Update(float frameTime)
+    {
+        base.Update(frameTime);
+        _fps.RecordTickPosition();
     }
 }

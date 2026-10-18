@@ -20,7 +20,7 @@ namespace Content.Client.Fps3D;
 ///     hold left mouse to grab what the crosshair is on, release to drop/throw, right-click to freeze,
 ///     mouse wheel for distance, hold E and move the mouse to rotate. Everything else passes through untouched.
 /// </summary>
-public sealed class PhysGunInputSystem : EntitySystem
+public sealed partial class PhysGunInputSystem : EntitySystem
 {
     [Dependency] private IClyde _clyde = default!;
     [Dependency] private IInputManager _input = default!;

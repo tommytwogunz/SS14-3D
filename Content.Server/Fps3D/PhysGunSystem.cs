@@ -18,7 +18,7 @@ namespace Content.Server.Fps3D;
 ///     re-equip it), and while something is held, drags it to the holder's aim point every tick with a stiff spring
 ///     on SS14's 2D physics (so it still collides) plus the height layer for the vertical axis.
 /// </summary>
-public sealed class PhysGunSystem : EntitySystem
+public sealed partial class PhysGunSystem : EntitySystem
 {
     [Dependency] private SharedHandsSystem _hands = default!;
     [Dependency] private SharedActionsSystem _actions = default!;

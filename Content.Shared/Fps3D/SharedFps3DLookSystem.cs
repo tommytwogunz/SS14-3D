@@ -8,7 +8,7 @@ namespace Content.Shared.Fps3D;
 ///     WASD is rotated by the mover's grid angle + <see cref="InputMoverComponent.RelativeRotation"/>;
 ///     setting that rotation to the camera yaw makes "forward" go where the player is looking.
 /// </summary>
-public sealed class SharedFps3DLookSystem : EntitySystem
+public sealed partial class SharedFps3DLookSystem : EntitySystem
 {
     [Dependency] private SharedTransformSystem _transform = default!;
     [Dependency] private SharedHeight3DSystem _height = default!;
@@ -18,7 +18,9 @@ public sealed class SharedFps3DLookSystem : EntitySystem
     public override void Initialize()
     {
         base.Initialize();
-        SubscribeNetworkEvent<Fps3DLookMessage>(OnLook);
+        // Predictive: the client raises it inside the tick it applies to, the server handles it at that same tick and
+        // the client re-applies it when replaying, so both move along the same heading every tick.
+        SubscribeAllEvent<Fps3DLookMessage>(OnLook);
     }
 
     private void OnLook(Fps3DLookMessage msg, EntitySessionEventArgs args)
@@ -94,9 +96,9 @@ public sealed class SharedFps3DLookSystem : EntitySystem
     }
 }
 
-/// <summary>Client → server: the first-person camera yaw for the sender's attached entity.</summary>
+/// <summary>Client → server (predictive): the first-person camera yaw/pitch for the sender's attached entity.</summary>
 [Serializable, NetSerializable]
-public sealed class Fps3DLookMessage(float yaw, float pitch) : EntityEventArgs
+public sealed partial class Fps3DLookMessage(float yaw, float pitch) : EntityEventArgs
 {
     public float Yaw = yaw;
     public float Pitch = pitch;

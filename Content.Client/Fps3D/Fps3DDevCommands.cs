@@ -16,7 +16,7 @@ namespace Content.Client.Fps3D;
 
 /// <summary>Treat the view as mouse-captured (crosshair aiming) even when the window isn't focused.</summary>
 [AnyCommand]
-public sealed class Fps3DCrosshairTestCommand : IConsoleCommand
+public sealed partial class Fps3DCrosshairTestCommand : IConsoleCommand
 {
     [Dependency] private IEntitySystemManager _systems = default!;
 
@@ -35,7 +35,7 @@ public sealed class Fps3DCrosshairTestCommand : IConsoleCommand
 ///     target entity and coordinates, through the client InputSystem (predicted locally and sent to the server).
 /// </summary>
 [AnyCommand]
-public sealed class Fps3DKeyCommand : IConsoleCommand
+public sealed partial class Fps3DKeyCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IInputManager _input = default!;
@@ -92,7 +92,7 @@ public sealed class Fps3DKeyCommand : IConsoleCommand
 
 /// <summary>Logs the local player's position and movement frame.</summary>
 [AnyCommand]
-public sealed class Fps3DWhereCommand : IConsoleCommand
+public sealed partial class Fps3DWhereCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -123,7 +123,7 @@ public sealed class Fps3DWhereCommand : IConsoleCommand
 
 /// <summary>Logs height state of nearby entities whose prototype ID contains the given text.</summary>
 [AnyCommand]
-public sealed class Fps3DTrackCommand : IConsoleCommand
+public sealed partial class Fps3DTrackCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -165,7 +165,7 @@ public sealed class Fps3DTrackCommand : IConsoleCommand
 
 /// <summary>Sends the physics gun's wheel/rotate messages (the ones mouse wheel and E + mouse send) for testing.</summary>
 [AnyCommand]
-public sealed class Fps3DPhysGunCommand : IConsoleCommand
+public sealed partial class Fps3DPhysGunCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
 
@@ -196,7 +196,7 @@ public sealed class Fps3DPhysGunCommand : IConsoleCommand
 
 /// <summary>Closes open windows, menus and popups (e.g. the escape menu or a context menu) for clean tests.</summary>
 [AnyCommand]
-public sealed class Fps3DCloseUiCommand : IConsoleCommand
+public sealed partial class Fps3DCloseUiCommand : IConsoleCommand
 {
     [Dependency] private Robust.Client.UserInterface.IUserInterfaceManager _ui = default!;
 
@@ -226,7 +226,7 @@ public sealed class Fps3DCloseUiCommand : IConsoleCommand
 ///     solutions, hands, combat mode. Used by the stage 6 gameplay checks.
 /// </summary>
 [AnyCommand]
-public sealed class Fps3DInspectCommand : IConsoleCommand
+public sealed partial class Fps3DInspectCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -287,7 +287,7 @@ public sealed class Fps3DInspectCommand : IConsoleCommand
 
 /// <summary>Logs which windows and popups are open (to check UIs work in first person).</summary>
 [AnyCommand]
-public sealed class Fps3DUiCommand : IConsoleCommand
+public sealed partial class Fps3DUiCommand : IConsoleCommand
 {
     [Dependency] private Robust.Client.UserInterface.IUserInterfaceManager _ui = default!;
 
@@ -324,7 +324,7 @@ public sealed class Fps3DUiCommand : IConsoleCommand
 
 /// <summary>Triggers one of the local player's actions by prototype (like clicking it on the hotbar).</summary>
 [AnyCommand]
-public sealed class Fps3DActionCommand : IConsoleCommand
+public sealed partial class Fps3DActionCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -356,7 +356,7 @@ public sealed class Fps3DActionCommand : IConsoleCommand
 
 /// <summary>Logs what SS14's 2D click test (used by melee and interactions) finds at the crosshair point.</summary>
 [AnyCommand]
-public sealed class Fps3DClickTestCommand : IConsoleCommand
+public sealed partial class Fps3DClickTestCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -385,7 +385,7 @@ public sealed class Fps3DClickTestCommand : IConsoleCommand
 
 /// <summary>Clicks the item in an inventory slot, as clicking it on the inventory bar does (e.g. opens the PDA).</summary>
 [AnyCommand]
-public sealed class Fps3DSlotCommand : IConsoleCommand
+public sealed partial class Fps3DSlotCommand : IConsoleCommand
 {
     [Dependency] private IEntityManager _entities = default!;
     [Dependency] private IPlayerManager _player = default!;
@@ -408,5 +408,27 @@ public sealed class Fps3DSlotCommand : IConsoleCommand
 
         inventory.UIInventoryActivateItem(args[0], player);
         Logger.GetSawmill("fps3d").Info($"slot {args[0]}: activated {_entities.ToPrettyString(item.Value)}");
+    }
+}
+
+/// <summary>Records the camera every frame and logs how smooth its motion was (for checking movement jitter).</summary>
+[AnyCommand]
+public sealed partial class Fps3DCamLogCommand : IConsoleCommand
+{
+    [Dependency] private IEntityManager _entities = default!;
+
+    public string Command => "fps3d_camlog";
+    public string Description => "Record camera motion for <seconds> and log per-frame smoothness stats.";
+    public string Help => "Usage: fps3d_camlog <seconds>";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length < 1 || !float.TryParse(args[0], System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            shell.WriteLine(Help);
+            return;
+        }
+
+        _entities.System<Fps3DSystem>().StartCameraLog(seconds, args.Length > 1 && args[1] == "v");
     }
 }

@@ -25,7 +25,7 @@ namespace Content.Shared.Fps3D;
 ///     pass over it), thrown items flying in arcs, and tall props tipping over when hit hard.
 ///     Numbers follow GMod: sv_gravity 600 u/s² ≈ 15.2 m/s² (1 u ≈ 2.54 cm).
 /// </summary>
-public sealed class SharedHeight3DSystem : EntitySystem
+public sealed partial class SharedHeight3DSystem : EntitySystem
 {
     [Dependency] private SharedGravitySystem _gravity = default!;
     [Dependency] private EntityLookupSystem _lookup = default!;
@@ -33,7 +33,6 @@ public sealed class SharedHeight3DSystem : EntitySystem
     [Dependency] private MovementSpeedModifierSystem _speed = default!;
     [Dependency] private INetManager _net = default!;
     [Dependency] private ISharedPlayerManager _player = default!;
-    [Dependency] private IGameTiming _timing = default!;
     [Dependency] private SharedBroadphaseSystem _broadphase = default!;
 
     public const float Gravity = 15.2f;
