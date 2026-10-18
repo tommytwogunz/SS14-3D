@@ -137,10 +137,13 @@ namespace Robust.Client.Graphics.Clyde
             if (mesh == null)
                 return false;
 
+            // An explicit world yaw faces the model's front (-Y) along it; otherwise it turns with the entity.
+            var basePos = request.Position ?? entry.WorldPos;
+            var yaw = request.WorldYaw is { } worldYaw ? worldYaw + MathF.PI : (float) entry.WorldRot.Theta + request.Yaw;
             var placement = Matrix4x4.CreateScale(request.Scale)
-                            * Matrix4x4.CreateRotationZ((float) entry.WorldRot.Theta + request.Yaw)
-                            * Matrix4x4.CreateTranslation(new Vector3(entry.WorldPos, 0));
-            placement *= PoseMatrix(entry.Uid, entry.WorldPos, out _);
+                            * Matrix4x4.CreateRotationZ(yaw)
+                            * Matrix4x4.CreateTranslation(new Vector3(basePos, 0));
+            placement *= PoseMatrix(entry.Uid, basePos, out _);
 
             Vector4[]? palette = null;
             foreach (var part in mesh.Parts)
@@ -156,16 +159,7 @@ namespace Robust.Client.Graphics.Clyde
                 else if (part.TintKind == 'p')
                     tint = (palette ??= SpritePalette(entry.Sprite))[Math.Min(part.TintIndex, 2)];
 
-                var model = placement;
-                if (part.Bone != null && request.Bones.TryGetValue(part.Bone, out var euler) && euler != Vector3.Zero)
-                {
-                    model = Matrix4x4.CreateTranslation(-part.Pivot)
-                            * Matrix4x4.CreateRotationX(euler.X)
-                            * Matrix4x4.CreateRotationY(euler.Y)
-                            * Matrix4x4.CreateRotationZ(euler.Z)
-                            * Matrix4x4.CreateTranslation(part.Pivot)
-                            * placement;
-                }
+                var model = BoneMatrix(request, part) * placement;
 
                 if (part.TintKind == 's')
                 {
@@ -178,6 +172,9 @@ namespace Robust.Client.Graphics.Clyde
                     Texture = mesh.Texture, Start = part.Start, Count = part.Count, Model = model, Tint = tint,
                 });
             }
+
+            if (request.NoPick)
+                return true;
 
             // Click volume: the mesh bounds, turned with the entity.
             var rot = entry.WorldRot + new Angle(request.Yaw);
@@ -219,6 +216,19 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             return new[] { Vector4.One, new Vector4(0.8f, 0.8f, 0.8f, 1), new Vector4(0.5f, 0.5f, 0.5f, 1) };
+        }
+
+        /// <summary>The part's bone pose (rotation about its pivot) from the request, or identity.</summary>
+        private static Matrix4x4 BoneMatrix(World3DModelRequest request, in World3DMeshPart part)
+        {
+            if (part.Bone == null || !request.Bones.TryGetValue(part.Bone, out var euler) || euler == Vector3.Zero)
+                return Matrix4x4.Identity;
+
+            return Matrix4x4.CreateTranslation(-part.Pivot)
+                   * Matrix4x4.CreateRotationX(euler.X)
+                   * Matrix4x4.CreateRotationY(euler.Y)
+                   * Matrix4x4.CreateRotationZ(euler.Z)
+                   * Matrix4x4.CreateTranslation(part.Pivot);
         }
 
         /// <summary>

@@ -15,7 +15,7 @@ namespace Robust.Client.Graphics.Clyde
         private const float ViewModelForward = 0.5f;
         private const float ViewModelRight = 0.2f;
         private const float ViewModelDown = 0.2f;
-        private const float ViewModelScale = 0.45f;
+        private const float ViewModelScale = 0.34f;
 
         private readonly List<World3DInstance> _world3DViewModel = new();
         private Vector3 _world3DMuzzle;
@@ -23,13 +23,17 @@ namespace Robust.Client.Graphics.Clyde
         /// <summary>Camera basis for the current frame (forward, right, up).</summary>
         private (Vector3 Fwd, Vector3 Right, Vector3 Up) CameraBasis()
         {
-            var fwd = _world3D!.Forward;
-            var right = Vector3.Normalize(Vector3.Cross(fwd, Vector3.UnitZ));
+            // This frame's camera, including view punch and roll, so the view model moves with the view.
+            var fwd = _world3DCamForward;
+            var right = Vector3.Normalize(Vector3.Cross(fwd, _world3DCamUp));
             if (!float.IsFinite(right.X))
                 right = Vector3.UnitX;
             var up = Vector3.Cross(right, fwd);
             return (fwd, right, up);
         }
+
+        private Vector3 _world3DCamForward = Vector3.UnitY;
+        private Vector3 _world3DCamUp = Vector3.UnitZ;
 
         /// <summary>
         ///     Builds the view model instances for this frame and the muzzle point beams start from.
@@ -39,20 +43,61 @@ namespace Robust.Client.Graphics.Clyde
         {
             _world3DViewModel.Clear();
             var (fwd, right, up) = CameraBasis();
-            var anchor = camPos + fwd * ViewModelForward + right * ViewModelRight - up * ViewModelDown;
-            _world3DMuzzle = anchor + fwd * (ViewModelScale * 0.5f);
 
-            if (_world3D!.ViewModelEntity is not { } uid
+            // View space (+X right, +Y forward, +Z up, camera at the origin) → world.
+            var view = new Matrix4x4(
+                right.X, right.Y, right.Z, 0,
+                fwd.X, fwd.Y, fwd.Z, 0,
+                up.X, up.Y, up.Z, 0,
+                camPos.X, camPos.Y, camPos.Z, 1);
+            var toWorld = _world3D!.ViewModelOffset * view;
+
+            // Arms first; the held item then follows the right arm's bone.
+            var hand = Matrix4x4.Identity;
+            if (_world3D.ViewArms is { } arms && GetWorld3DMesh(arms.Model) is { } mesh)
+            {
+                SpriteComponent? playerSprite = null;
+                if (_world3DPlayer?.LocalEntity is { } player)
+                    _entityManager.TryGetComponent(player, out playerSprite);
+
+                foreach (var part in mesh.Parts)
+                {
+                    if (part.Group != null && arms.Hidden.Contains(part.Group))
+                        continue;
+
+                    var bone = BoneMatrix(arms, part);
+                    if (part.Bone == "armR")
+                        hand = bone;
+
+                    var tint = part.TintKind == 'c'
+                        ? EntityMainColor(arms.ColorEntities[part.TintIndex])
+                          ?? (playerSprite != null ? LayerMainColor(playerSprite, arms.ColorLayers[part.TintIndex]) : null)
+                          ?? arms.Colors[part.TintIndex]
+                        : Vector4.One;
+                    _world3DViewModel.Add(new World3DInstance
+                    {
+                        Texture = mesh.Texture, Start = part.Start, Count = part.Count,
+                        Model = Matrix4x4.CreateScale(arms.Scale) * bone * toWorld, Tint = tint,
+                    });
+                }
+            }
+
+            // The item sits in the right hand's grip: image right → forward (guns point right in SS14 icons),
+            // extrusion → sideways, image up → up.
+            var grip = new Vector3(ViewModelRight, ViewModelForward, -ViewModelDown);
+            var itemBasis = new Matrix4x4(
+                0, 1, 0, 0,
+                1, 0, 0, 0,
+                0, 0, 1, 0,
+                grip.X, grip.Y, grip.Z, 1);
+            var itemToWorld = itemBasis * hand * toWorld;
+            _world3DMuzzle = Vector3.Transform(new Vector3(ViewModelScale * 0.5f, 0, 0), itemToWorld);
+
+            if (_world3D.ViewModelEntity is not { } uid
                 || !_entityManager.TryGetComponent(uid, out SpriteComponent? sprite))
                 return;
 
-            // Image right → forward (guns point right in SS14 icons), extrusion → sideways, image up → up.
-            var basis = new Matrix4x4(
-                fwd.X, fwd.Y, fwd.Z, 0,
-                right.X, right.Y, right.Z, 0,
-                up.X, up.Y, up.Z, 0,
-                anchor.X, anchor.Y, anchor.Z, 1);
-            var placement = Matrix4x4.CreateScale(ViewModelScale) * basis;
+            var placement = Matrix4x4.CreateScale(ViewModelScale) * itemToWorld;
 
             for (var l = 0; l < sprite.Layers.Count; l++)
             {

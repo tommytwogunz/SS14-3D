@@ -70,6 +70,18 @@ public interface IWorld3DManager
     /// </summary>
     Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
 
+    /// <summary>Temporary camera kick (radians: pitch, yaw, roll) on top of the look direction: view punch, recoil, knockdown roll.</summary>
+    Vector3 CameraPunch { get; set; }
+
+    /// <summary>First-person arms mesh drawn in view space (model units: +X right, +Y forward, +Z up from the camera). Null = no arms.</summary>
+    World3DModelRequest? ViewArms { get; set; }
+
+    /// <summary>View-space transform applied to the arms and held item (bob, sway, swing, recoil).</summary>
+    Matrix4x4 ViewModelOffset { get; set; }
+
+    /// <summary>Draw the local player's own model (via <see cref="ModelProvider"/>) so you see your body and legs.</summary>
+    bool DrawLocalBody { get; set; }
+
     /// <summary>Camera height above the floor this frame (player height + eye offset). NaN = render3d.eye_height.</summary>
     float CameraHeight { get; set; }
 
@@ -131,6 +143,10 @@ internal sealed class World3DManager : IWorld3DManager
 
     public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
     public Func<EntityUid, World3DModelRequest?>? ModelProvider { get; set; }
+    public Vector3 CameraPunch { get; set; }
+    public World3DModelRequest? ViewArms { get; set; }
+    public Matrix4x4 ViewModelOffset { get; set; } = Matrix4x4.Identity;
+    public bool DrawLocalBody { get; set; }
     public float CameraHeight { get; set; } = float.NaN;
     public System.Numerics.Vector2? CameraPosition { get; set; }
 
@@ -233,6 +249,15 @@ public sealed class World3DModelRequest
 
     /// <summary>Uniform scale.</summary>
     public float Scale = 1f;
+
+    /// <summary>Draw at this world position instead of the entity's (e.g. your own body under the smoothed camera).</summary>
+    public Vector2? Position;
+
+    /// <summary>Absolute world yaw (radians, 0 = facing north) instead of the entity's rotation; the model's front (-Y) faces it.</summary>
+    public float? WorldYaw;
+
+    /// <summary>No click volume (your own body).</summary>
+    public bool NoPick;
 
     /// <summary>Extra yaw (radians) on top of the entity's rotation, e.g. to turn a model whose sprite faces another way.</summary>
     public float Yaw;

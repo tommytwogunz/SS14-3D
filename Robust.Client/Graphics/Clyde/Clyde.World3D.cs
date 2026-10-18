@@ -282,13 +282,28 @@ void main()
             var camFlat = _world3D.CameraPosition ?? eye.Position.Position;
             var camHeight = float.IsFinite(_world3D.CameraHeight) ? _world3D.CameraHeight : _render3DEyeHeight;
             var camPos = new Vector3(camFlat, camHeight);
+            // Look direction plus the content's camera kick (view punch, recoil, knockdown roll).
+            var punch = _world3D.CameraPunch;
             var forward = _world3D.Forward;
+            var camUp = Vector3.UnitZ;
+            if (punch != Vector3.Zero)
+            {
+                var yaw = _world3D.Yaw + punch.Y;
+                var pitch = Math.Clamp(_world3D.Pitch + punch.X, -1.55f, 1.55f);
+                forward = new Vector3(-MathF.Sin(yaw) * MathF.Cos(pitch), MathF.Cos(yaw) * MathF.Cos(pitch), MathF.Sin(pitch));
+                var flatRight = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitZ));
+                var flatUp = Vector3.Cross(flatRight, forward);
+                camUp = Vector3.Normalize(flatUp * MathF.Cos(punch.Z) + flatRight * MathF.Sin(punch.Z));
+            }
+
+            _world3DCamForward = forward;
+            _world3DCamUp = camUp;
 
             var size = viewport.RenderTarget.Size;
             var aspect = size.X / (float) Math.Max(1, size.Y);
             var proj = Matrix4x4.CreatePerspectiveFieldOfView(
                 MathHelper.DegreesToRadians(Math.Clamp(_render3DFov, 30f, 140f)), aspect, 0.05f, 400f);
-            var view = Matrix4x4.CreateLookAt(camPos, camPos + forward, Vector3.UnitZ);
+            var view = Matrix4x4.CreateLookAt(camPos, camPos + forward, camUp);
             var viewProj = view * proj;
 
             var program = _world3DProgram!;
@@ -578,7 +593,8 @@ void main()
             for (var i = 0; i < count; i++)
             {
                 ref var entry = ref _drawingSpriteList[i];
-                if (_world3DShapes[i] != World3DShape.Hidden
+                // Your own entity is hidden, except for its body mesh when content draws it (legs when you look down).
+                if ((_world3DShapes[i] != World3DShape.Hidden || entry.Uid == local && _world3D.DrawLocalBody)
                     && _world3D.ModelProvider?.Invoke(entry.Uid) is { } meshRequest
                     && EmitMeshModel(entry, meshRequest))
                 {
