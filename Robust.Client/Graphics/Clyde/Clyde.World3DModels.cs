@@ -522,14 +522,16 @@ namespace Robust.Client.Graphics.Clyde
 
             if (onWall)
             {
-                // Mounted on a wall tile: show it on the open face nearest the camera.
+                // Mounted on a wall tile: the mount's own rotation says which side it faces (its sprite's bottom points
+                // out into the room, as in 2D). Use the open face closest to that, so it stays put as you walk around;
+                // picking the face nearest the camera made APCs and alarms hop between sides.
                 var bestDot = float.MinValue;
-                var toCam = camFlat - TileCenterWorld(entry);
+                var facing = entry.Xform.LocalRotation.RotateVec(new Vector2(0, -1));
                 foreach (var dir in CardinalDirs)
                 {
                     if (_world3DWallTiles.Contains((grid, tile + dir)))
                         continue;
-                    var dot = Vector2.Dot(gridRot.RotateVec(dir), toCam);
+                    var dot = Vector2.Dot(dir, facing);
                     if (dot > bestDot)
                     {
                         bestDot = dot;
