@@ -34,6 +34,12 @@ public interface IWorld3DManager
     /// </summary>
     Func<EntityUid, World3DShape>? ShapeClassifier { get; set; }
 
+    /// <summary>
+    ///     Optional hook for content: how far open a door is, 0 (closed) to 1 (fully open).
+    ///     Doors render as two halves sliding into the walls by this amount.
+    /// </summary>
+    Func<EntityUid, float>? DoorOpenAmount { get; set; }
+
     /// <summary>Debug: log every entity the next 3D frame draws (shape, size, prototype).</summary>
     bool DumpNextFrame { get; set; }
 }
@@ -70,6 +76,8 @@ internal sealed class World3DManager : IWorld3DManager
     }
 
     public Func<EntityUid, World3DShape>? ShapeClassifier { get; set; }
+
+    public Func<EntityUid, float>? DoorOpenAmount { get; set; }
 
     public bool DumpNextFrame { get; set; }
 

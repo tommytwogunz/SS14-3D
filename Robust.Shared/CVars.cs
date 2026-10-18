@@ -1148,6 +1148,10 @@ namespace Robust.Shared
         public static readonly CVarDef<float> Render3DUprightScale =
             CVarDef.Create("render3d.upright_scale", 1.75f, CVar.CLIENTONLY | CVar.ARCHIVE);
 
+        /// <summary>Dev testing: path of a file whose lines are run as console commands each frame (then deleted). Empty = off.</summary>
+        public static readonly CVarDef<string> Render3DDevCmdFile =
+            CVarDef.Create("render3d.dev_cmd_file", "", CVar.CLIENTONLY);
+
         public static readonly CVarDef<int> Render3DDebugMask =
             CVarDef.Create("render3d.debug_mask", 3, CVar.CLIENTONLY);
 

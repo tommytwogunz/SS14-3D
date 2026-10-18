@@ -145,6 +145,7 @@ namespace Robust.Client
             deps.Register<IFontManagerInternal, FontManager>();
             deps.Register<IEyeManager, EyeManager>();
             deps.Register<IWorld3DManager, World3DManager>();
+            deps.Register<World3DDevBridge>();
             deps.Register<IPlacementManager, PlacementManager>();
             deps.Register<IOverlayManager, OverlayManager>();
             deps.Register<IOverlayManagerInternal, OverlayManager>();

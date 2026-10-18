@@ -546,7 +546,16 @@ namespace Robust.Client.Graphics.Clyde
 
         private void EmitCenterPanel(in SpriteData entry, float halfThickness)
         {
-            // Run the panel along the wall line: if walls sit east/west, span X; otherwise span Y.
+            var (along, across) = PanelAxes(entry, halfThickness);
+            EmitPanel(entry, TileCenterWorld(entry), along, across);
+        }
+
+        /// <summary>
+        ///     World-space half-extents of a panel through the tile centre that runs along the wall line:
+        ///     if walls sit north/south of the tile it spans grid Y, otherwise grid X.
+        /// </summary>
+        private (Vector2 Along, Vector2 Across) PanelAxes(in SpriteData entry, float halfThickness)
+        {
             var (grid, tile) = TileKey(entry);
             var gridRot = GridRotation(entry);
             var wallsX = _world3DWallTiles.Contains((grid, tile + new Vector2i(1, 0)))
@@ -554,19 +563,64 @@ namespace Robust.Client.Graphics.Clyde
             var wallsY = _world3DWallTiles.Contains((grid, tile + new Vector2i(0, 1)))
                          || _world3DWallTiles.Contains((grid, tile + new Vector2i(0, -1)));
 
-            Vector2 halfX, halfY;
-            if (wallsY && !wallsX)
-            {
-                halfX = gridRot.RotateVec(new Vector2(halfThickness, 0));
-                halfY = gridRot.RotateVec(new Vector2(0, 0.5f));
-            }
-            else
-            {
-                halfX = gridRot.RotateVec(new Vector2(0.5f, 0));
-                halfY = gridRot.RotateVec(new Vector2(0, halfThickness));
-            }
+            return wallsY && !wallsX
+                ? (gridRot.RotateVec(new Vector2(0, 0.5f)), gridRot.RotateVec(new Vector2(halfThickness, 0)))
+                : (gridRot.RotateVec(new Vector2(0.5f, 0)), gridRot.RotateVec(new Vector2(0, halfThickness)));
+        }
 
-            EmitPanel(entry, TileCenterWorld(entry), halfX, halfY);
+        /// <summary>
+        ///     Doors are two half-panels that slide apart into the neighbouring walls as the door opens.
+        ///     The base layers always show the door's "closed" art, so the panels look the same at any point
+        ///     of the 2D open/close animation; overlay layers (lights, bolts, panels) only show while fully shut.
+        /// </summary>
+        private void EmitDoor(in SpriteData entry)
+        {
+            var open = Math.Clamp(_world3D!.DoorOpenAmount?.Invoke(entry.Uid) ?? 0f, 0f, 1f);
+            if (open >= 0.999f)
+                return; // Fully open: the halves are inside the walls (or there are none to hide in).
+
+            var (along, across) = PanelAxes(entry, 0.12f);
+            var dir = Vector2.Normalize(along);
+            var center = TileCenterWorld(entry);
+            var halfLen = along * 0.5f;
+            var offset = 0.25f + 0.5f * open;
+            var sprite = entry.Sprite;
+
+            for (var l = 0; l < sprite.Layers.Count; l++)
+            {
+                var layer = sprite.Layers[l];
+                var frame = ClosedDoorFrame(layer);
+                if (frame == null)
+                {
+                    if (open > 0f)
+                        continue;
+                    frame = FrontFrame(sprite, layer);
+                    if (frame == null)
+                        continue;
+                }
+
+                var (ct, uvTL, uvBR) = ResolveUV(frame);
+                var uMid = (uvTL.X + uvBR.X) / 2f;
+                var grow = 1f + 0.01f * l;
+                var color = LayerColor(sprite, layer);
+
+                PushOrientedBox(ct.TextureId, center - dir * offset, halfLen * grow, across * grow, 0f, _render3DWallHeight,
+                    uvTL, new Vector2(uMid, uvBR.Y), color);
+                PushOrientedBox(ct.TextureId, center + dir * offset, halfLen * grow, across * grow, 0f, _render3DWallHeight,
+                    new Vector2(uMid, uvTL.Y), uvBR, color);
+            }
+        }
+
+        /// <summary>The "closed" frame for a layer that is showing one of the door cycle states, else null.</summary>
+        private static Texture? ClosedDoorFrame(SpriteComponent.Layer layer)
+        {
+            if (!layer.Drawn || layer.ActualRsi is not { } rsi)
+                return null;
+
+            if (layer.State.Name is not ("closed" or "open" or "opening" or "closing"))
+                return null;
+
+            return rsi.TryGetState("closed", out var closed) ? closed.GetFrame(RsiDirection.South, 0) : null;
         }
 
         private void EmitPanel(in SpriteData entry, Vector2 center, Vector2 halfX, Vector2 halfY)

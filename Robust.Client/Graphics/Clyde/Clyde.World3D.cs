@@ -52,6 +52,7 @@ namespace Robust.Client.Graphics.Clyde
         private bool _world3DDumpGrids;
 
         private IWorld3DManager? _world3D;
+        private World3DDevBridge? _world3DDev;
         private IPlayerManager? _world3DPlayer;
         private IEyeManager? _world3DEyes;
 
@@ -567,7 +568,7 @@ void main()
                         EmitPane(entry);
                         break;
                     case World3DShape.Door:
-                        EmitCenterPanel(entry, 0.12f);
+                        EmitDoor(entry);
                         break;
                     case World3DShape.Fence:
                         EmitCenterPanel(entry, 0.03f);
@@ -763,7 +764,6 @@ void main()
             var z1 = _render3DWallHeight;
             var tex = ct.TextureId;
 
-            Vector3 Lo(Vector2 p) => new(p, 0f);
             Vector3 Hi(Vector2 p) => new(p, z1);
 
             var sw = c - ax - ay;
@@ -773,12 +773,30 @@ void main()
             var nx = new Vector3(Vector2.Normalize(ax), 0);
             var ny = new Vector3(Vector2.Normalize(ay), 0);
 
-            // Local south, north, west, east, top.
-            PushQuad(tex, Lo(sw), Lo(se), Hi(se), Hi(sw), uvBL, uvBR, uvTR, uvTL, -ny, color);
-            PushQuad(tex, Lo(ne), Lo(nw), Hi(nw), Hi(ne), uvBL, uvBR, uvTR, uvTL, ny, color);
-            PushQuad(tex, Lo(nw), Lo(sw), Hi(sw), Hi(nw), uvBL, uvBR, uvTR, uvTL, -nx, color);
-            PushQuad(tex, Lo(se), Lo(ne), Hi(ne), Hi(se), uvBL, uvBR, uvTR, uvTL, nx, color);
+            // Local south, north, west, east sides tile the 1 m sprite once per metre of height; then the top.
+            PushTiledSide(tex, sw, se, z1, uvTL, uvBR, -ny, color);
+            PushTiledSide(tex, ne, nw, z1, uvTL, uvBR, ny, color);
+            PushTiledSide(tex, nw, sw, z1, uvTL, uvBR, -nx, color);
+            PushTiledSide(tex, se, ne, z1, uvTL, uvBR, nx, color);
             PushQuad(tex, Hi(sw), Hi(se), Hi(ne), Hi(nw), uvBL, uvBR, uvTR, uvTL, Vector3.UnitZ, color);
+        }
+
+        /// <summary>
+        ///     A vertical face from floor to <paramref name="height"/>, split into 1 m segments so a 1 m sprite repeats
+        ///     instead of stretching. The last segment shows the bottom part of the sprite.
+        /// </summary>
+        private void PushTiledSide(ClydeHandle tex, Vector2 a, Vector2 b, float height, Vector2 uvTL, Vector2 uvBR,
+            Vector3 normal, Vector4 color)
+        {
+            for (var z0 = 0f; z0 < height - 0.001f; z0 += 1f)
+            {
+                var z1 = MathF.Min(z0 + 1f, height);
+                var vTop = uvBR.Y + (uvTL.Y - uvBR.Y) * (z1 - z0);
+                PushQuad(tex,
+                    new Vector3(a, z0), new Vector3(b, z0), new Vector3(b, z1), new Vector3(a, z1),
+                    new Vector2(uvTL.X, uvBR.Y), uvBR, new Vector2(uvBR.X, vTop), new Vector2(uvTL.X, vTop),
+                    normal, color);
+            }
         }
 
         private void PushQuad(ClydeHandle texture,

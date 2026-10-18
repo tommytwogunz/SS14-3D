@@ -36,6 +36,9 @@ namespace Robust.Client.Graphics.Clyde
 
         public void Render()
         {
+            _world3DDev ??= _deps.Resolve<World3D.World3DDevBridge>();
+            _world3DDev.Poll();
+
             CheckTransferringScreenshots();
 
             var allMinimized = true;
