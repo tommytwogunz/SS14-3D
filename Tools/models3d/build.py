@@ -9,14 +9,15 @@ import m3d
 import models_furniture
 import models_people
 import models_animals
+import models_viewmodel
 
 OUT = os.path.join(HERE, "..", "..", "Resources", "Models3D")
 os.makedirs(OUT, exist_ok=True)
 
 MODELS = {}
-for mod in (m3d, models_furniture, models_people, models_animals):
+for mod in (m3d, models_furniture, models_people, models_animals, models_viewmodel):
     importlib.reload(mod)
-for mod in (models_furniture, models_people, models_animals):
+for mod in (models_furniture, models_people, models_animals, models_viewmodel):
     MODELS.update(mod.MODELS)
 
 args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []

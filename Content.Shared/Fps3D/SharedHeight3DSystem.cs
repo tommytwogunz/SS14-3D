@@ -34,6 +34,7 @@ public sealed partial class SharedHeight3DSystem : EntitySystem
     [Dependency] private INetManager _net = default!;
     [Dependency] private ISharedPlayerManager _player = default!;
     [Dependency] private SharedBroadphaseSystem _broadphase = default!;
+    [Dependency] private SharedPhysicsSystem _physics = default!;
 
     public const float Gravity = 15.2f;
     /// <summary>Peak ≈ 0.96 m: enough to get onto a 0.9 m table, like jumping onto a desk in GMod.</summary>
@@ -265,6 +266,15 @@ public sealed partial class SharedHeight3DSystem : EntitySystem
                 if (comp.VZ == 0f && comp.Spin != 0f)
                     comp.Spin = 0f;
                 changed |= impact != 0f;
+            }
+
+            // A jumping mob is "in the air" for SS14: step triggers (banana peels, puddles, mousetraps) skip bodies in the
+            // air, so you can jump over them like in GMod, but you still slip if you land on one.
+            if (comp.Kind == Height3DKind.Mob && TryComp<PhysicsComponent>(uid, out var body))
+            {
+                var status = comp.Z > ground + 0.05f ? BodyStatus.InAir : BodyStatus.OnGround;
+                if (body.BodyStatus != status)
+                    _physics.SetBodyStatus(uid, body, status);
             }
         }
 

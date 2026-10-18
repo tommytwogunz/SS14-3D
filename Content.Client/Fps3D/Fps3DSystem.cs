@@ -47,6 +47,7 @@ public sealed partial class Fps3DSystem : EntitySystem
     [Dependency] private Robust.Client.ResourceManagement.IResourceCache _cache = default!;
 
     private Fps3DCrosshairOverlay _crosshair = default!;
+    public Fps3DCrosshairOverlay Crosshair => _crosshair;
 
     private static readonly ProtoId<TagPrototype> WindowTag = "Window";
 

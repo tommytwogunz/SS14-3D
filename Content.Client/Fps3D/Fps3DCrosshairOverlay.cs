@@ -25,6 +25,12 @@ public sealed class Fps3DCrosshairOverlay : Overlay
 
     public bool Enabled;
 
+    /// <summary>Show a hitmarker (GMod/Source style X around the crosshair) until this real time.</summary>
+    public TimeSpan HitMarkerUntil;
+
+    /// <summary>Real time now, set by the owner each frame (the overlay has no timing of its own).</summary>
+    public TimeSpan Now;
+
     public Fps3DCrosshairOverlay(IEntityManager entities, IEyeManager eye, IUserInterfaceManager ui, IWorld3DManager world3D, IResourceCache cache)
     {
         _font = new VectorFont(cache.GetResource<FontResource>("/Fonts/NotoSans/NotoSans-Bold.ttf"), 11);
@@ -56,6 +62,22 @@ public sealed class Fps3DCrosshairOverlay : Overlay
         var outline = Color.Black.WithAlpha(0.6f);
         DrawCross(handle, c, arm + 1, thick + 1, outline);
         DrawCross(handle, c, arm, thick, color);
+
+        // Hitmarker: four short diagonal ticks that fade out.
+        if (Now < HitMarkerUntil)
+        {
+            var left = (float) (HitMarkerUntil - Now).TotalSeconds / 0.25f;
+            var hit = Color.White.WithAlpha(Math.Clamp(left, 0f, 1f));
+            for (var i = 0; i < 4; i++)
+            {
+                var d = new Vector2(i is 0 or 3 ? 1 : -1, i < 2 ? 1 : -1);
+                for (var k = 0; k < 6; k++)
+                {
+                    var p = c + d * (6f + k) * scale;
+                    handle.DrawRect(new UIBox2(p.X - thick, p.Y - thick, p.X + thick, p.Y + thick), hit);
+                }
+            }
+        }
 
         if (target is not { } uid || _world3D.CrosshairDistance > NameRange
             || !_entities.TryGetComponent(uid, out MetaDataComponent? meta))

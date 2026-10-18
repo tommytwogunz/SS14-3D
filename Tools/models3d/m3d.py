@@ -325,3 +325,20 @@ def decal(name, width, height, center, tint="s0", bone=None, pivot=None, tilt=0.
     obj.location = center
     _apply_transform(obj)
     return _finish(obj, tint, bone, pivot, material(f"decal{name}", (1, 1, 1), grime=0, wear=0))
+
+
+def limb(name, p0, p1, r0, r1, mat, tint="p0", bone=None, pivot=None, verts=14):
+    """A tapered cylinder from point p0 (radius r0) to p1 (radius r1), with rounded ends."""
+    a, b = Vector(p0), Vector(p1)
+    axis = b - a
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=verts, radius1=r0, radius2=r1, depth=axis.length)
+    obj = _obj_from_bmesh(name, bm)
+    obj.rotation_mode = "QUATERNION"
+    obj.rotation_quaternion = axis.to_track_quat("Z", "Y")
+    obj.location = (a + b) / 2
+    _bevel(obj, min(r0, r1) * 0.4, segments=3)
+    _apply_transform(obj)
+    for p in obj.data.polygons:
+        p.use_smooth = True
+    return _finish(obj, tint, bone, pivot, mat)

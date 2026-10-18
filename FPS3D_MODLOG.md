@@ -347,3 +347,30 @@ Common entities now draw real meshes instead of extruded sprites; everything els
 - 2026-10-17: recon done, route chosen, cloning upstream into `ss14/`.
 - 2026-10-17: stage 1 renderer built; primitive-restart bug found and fixed; rotated walls fixed; verified in game.
 - 2026-10-18: stage 6 gameplay pass (tools/s6.sh), see the stage 6 section.
+
+## Core gameplay + first-person feel (2026-10-18, in progress — stopped here at the user's request)
+- Audit `tools/s7.sh`:
+  - **Passing:** banana peel and water-puddle slips; a space carp attacks and hurts you (0 → 84);
+    `endround` shows the round-end summary and `restartroundnow` starts a fresh round.
+  - **Unresolved:** a space lube puddle (30u) didn't knock down (cause not investigated; try 60u).
+  - **Harness issue:** the kill test picked a wandering mouse (rewrite it to damage a MobHuman, then finish
+    it with a punch).
+- **Jumping over slippery things:** jumping mobs get `BodyStatus.InAir` (SharedHeight3DSystem), which SS14's
+  step triggers already skip. Built, not yet re-tested.
+- **Your own body:** `DrawLocalBody` + `World3DModelRequest.Position`/`WorldYaw`/`NoPick`. The local human
+  model is drawn 0.3 m behind the camera, facing the look direction, without chest, head, hair, hat, arms or
+  pack. Looking down shows your legs and shoes (verified in screenshots). Not drawn when crouching or down.
+- **View model:**
+  - `viewarms` (Blender, view space) with sleeves from coat/jumpsuit and hands from gloves/skin.
+  - The held item sits in the right hand's grip and follows the `armR` bone.
+  - `ViewModelOffset` handles bob, mouse sway and the landing dip.
+  - `Fps3DFeelSystem` drives it:
+    - swing/punch detected from `MeleeWeaponComponent.NextAttack` and shots from `GunComponent.ShotCounter`;
+    - hitmarker when the targeted entity's damage rises within 0.6 s;
+    - damage view punch (damped spring);
+    - camera roll when knocked down;
+    - Source-style recoil.
+- **Engine:** `CameraPunch` (pitch/yaw/roll), and the view-model basis follows the punched camera.
+- **Not verified:** the jab animation (the screenshot after the bigger jab change still looked idle; check
+  timing and bone signs), gun recoil and hitmarker in screenshots, the jump-over-peel fix, and the
+  gameplay suite after these changes.

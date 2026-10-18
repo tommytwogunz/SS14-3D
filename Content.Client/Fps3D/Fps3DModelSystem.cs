@@ -24,6 +24,7 @@ public sealed partial class Fps3DModelSystem : EntitySystem
     [Dependency] private Content.Shared.Inventory.InventorySystem _inventory = default!;
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private SharedMapSystem _map = default!;
+    [Dependency] private Robust.Client.Player.IPlayerManager _player = default!;
 
     /// <summary>
     ///     Base prototype → model and scale. Walking up the entity's parents, the closest listed base wins; an empty
@@ -138,6 +139,8 @@ public sealed partial class Fps3DModelSystem : EntitySystem
         {
             case "human":
                 UpdateHuman(uid, request);
+                if (uid == _player.LocalEntity && !UpdateLocalBody(uid, request))
+                    return null;
                 break;
             case "quadruped":
             {
@@ -302,6 +305,44 @@ public sealed partial class Fps3DModelSystem : EntitySystem
 
         var pitch = TryComp(uid, out Height3DComponent? height) && float.IsFinite(height.LookPitch) ? height.LookPitch : 0f;
         request.Bones["head"] = new Vector3(Math.Clamp(-pitch * 0.7f, -0.6f, 0.6f), 0, 0);
+    }
+
+    /// <summary>
+    ///     Your own body in first person: drawn headless and armless (the view model has the arms) under the smoothed
+    ///     camera, a little behind it, facing where you look, so looking down shows your chest, legs and feet.
+    ///     Not drawn while crouching or lying down (the camera would sit inside it). False = don't draw.
+    /// </summary>
+    private bool UpdateLocalBody(EntityUid uid, World3DModelRequest request)
+    {
+        if (_world3D.CameraPosition is not { } cam
+            || TryComp(uid, out Height3DComponent? height) && height.Crouching
+            || TryComp(uid, out Content.Shared.Standing.StandingStateComponent? standing) && !standing.Standing)
+        {
+            return false;
+        }
+
+        foreach (var group in LocalHiddenGroups)
+            request.Hidden.Add(group);
+
+        var fwd = _world3D.ForwardFlat;
+        request.Position = cam - fwd * 0.3f;
+        request.WorldYaw = _world3D.Yaw;
+        request.NoPick = true;
+        return true;
+    }
+
+    private static readonly string[] LocalHiddenGroups = { "head", "hair", "hat", "arms", "chest", "pack" };
+
+    /// <summary>Colours the first-person arms like the body: sleeves from coat or jumpsuit, hands from gloves or skin.</summary>
+    public void FillArmColors(EntityUid uid, World3DModelRequest arms)
+    {
+        if (!TryComp(uid, out SpriteComponent? sprite))
+            return;
+
+        object skin = VisibleLayer(uid, sprite, HumanoidVisualLayers.Chest) ?? (object) HumanoidVisualLayers.Head;
+        arms.Colors[1] = arms.Colors[6] = DefaultSkin;
+        arms.ColorLayers[1] = VisibleLayer(uid, sprite, "outerClothing") ?? VisibleLayer(uid, sprite, "jumpsuit") ?? skin;
+        arms.ColorLayers[6] = VisibleLayer(uid, sprite, "gloves") ?? skin;
     }
 
     private static void SetHidden(World3DModelRequest request, string group, bool hidden)
