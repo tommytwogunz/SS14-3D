@@ -1,0 +1,179 @@
+using Content.Client.IconSmoothing;
+using Content.Shared.Administration;
+using Content.Shared.Doors.Components;
+using Content.Shared.Tag;
+using Robust.Client.Graphics;
+using Robust.Client.Graphics.World3D;
+using Robust.Client.Input;
+using Robust.Client.UserInterface;
+using Robust.Shared;
+using Robust.Shared.Configuration;
+using Robust.Shared.Console;
+using Robust.Shared.Input;
+using Robust.Shared.Physics.Components;
+using Robust.Shared.Prototypes;
+
+namespace Content.Client.Fps3D;
+
+/// <summary>
+///     Client glue for the engine's first-person 3D view (render3d.enabled):
+///     mouse-look, and telling the renderer which entities are walls, windows and doors.
+/// </summary>
+public sealed class Fps3DSystem : EntitySystem
+{
+    [Dependency] private IClyde _clyde = default!;
+    [Dependency] private IConfigurationManager _cfg = default!;
+    [Dependency] private IInputManager _input = default!;
+    [Dependency] private IUserInterfaceManager _ui = default!;
+    [Dependency] private IWorld3DManager _world3D = default!;
+    [Dependency] private TagSystem _tags = default!;
+
+    private static readonly ProtoId<TagPrototype> WindowTag = "Window";
+
+    /// <summary>Radians of turn per pixel of mouse movement (≈ GMod sensitivity 3 at 1x).</summary>
+    public float Sensitivity = 0.0022f;
+
+    private bool _enabled;
+    private bool _mouseCaptured;
+    private int _ignoreMotionFrames;
+
+    private EntityQuery<IconSmoothComponent> _smoothQuery;
+    private EntityQuery<DoorComponent> _doorQuery;
+    private EntityQuery<PhysicsComponent> _physicsQuery;
+
+    public override void Initialize()
+    {
+        base.Initialize();
+
+        _smoothQuery = GetEntityQuery<IconSmoothComponent>();
+        _doorQuery = GetEntityQuery<DoorComponent>();
+        _physicsQuery = GetEntityQuery<PhysicsComponent>();
+
+        _world3D.ShapeClassifier = Classify;
+        _clyde.MouseMove += OnMouseMove;
+        Subs.CVar(_cfg, CVars.Render3DEnabled, v => _enabled = v, true);
+    }
+
+    public override void Shutdown()
+    {
+        base.Shutdown();
+
+        _clyde.MouseMove -= OnMouseMove;
+        _world3D.ShapeClassifier = null;
+        SetMouseCaptured(false);
+    }
+
+    public override void FrameUpdate(float frameTime)
+    {
+        base.FrameUpdate(frameTime);
+
+        // Hold Left Alt to free the cursor for the UI (inventory, hotbar, menus).
+        // Also release while typing in chat or any other focused text field.
+        var wantCapture = _enabled
+                          && _clyde.MainWindow.IsFocused
+                          && !_input.IsKeyDown(Keyboard.Key.Alt)
+                          && _ui.KeyboardFocused == null;
+
+        SetMouseCaptured(wantCapture);
+
+        if (_ignoreMotionFrames > 0)
+            _ignoreMotionFrames--;
+    }
+
+    private void SetMouseCaptured(bool captured)
+    {
+        if (_mouseCaptured == captured)
+            return;
+
+        _mouseCaptured = captured;
+        _clyde.MainWindow.SetRelativeMouseMode(captured);
+        // SDL reports one big jump when relative mode turns on (cursor warps to the window centre).
+        _ignoreMotionFrames = captured ? 3 : 0;
+    }
+
+    private void OnMouseMove(MouseMoveEventArgs args)
+    {
+        if (!_mouseCaptured || _ignoreMotionFrames > 0)
+            return;
+
+        // Mouse right turns right (clockwise = negative yaw); mouse down looks down.
+        _world3D.AddLook(-args.Relative.X * Sensitivity, -args.Relative.Y * Sensitivity);
+    }
+
+    private World3DShape Classify(EntityUid uid)
+    {
+        if (_doorQuery.HasComponent(uid))
+            return IsSolid(uid) ? World3DShape.Box : World3DShape.Hidden;
+
+        if (_smoothQuery.TryGetComponent(uid, out var smooth) && smooth.Key is "walls" or "windows")
+            return World3DShape.Box;
+
+        if (_tags.HasTag(uid, WindowTag))
+            return World3DShape.Box;
+
+        return World3DShape.Auto;
+    }
+
+    private bool IsSolid(EntityUid uid)
+    {
+        return _physicsQuery.TryGetComponent(uid, out var body) && body.CanCollide && body.Hard;
+    }
+}
+
+[AnyCommand]
+public sealed class Fps3DLookCommand : IConsoleCommand
+{
+    [Dependency] private IWorld3DManager _world3D = default!;
+
+    public string Command => "fps3d_look";
+    public string Description => "Set the 3D camera look direction (degrees). Yaw 0 = north, 90 = west.";
+    public string Help => "Usage: fps3d_look <yaw> [pitch]";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        if (args.Length >= 1 && float.TryParse(args[0], System.Globalization.CultureInfo.InvariantCulture, out var yaw))
+            _world3D.Yaw = MathHelper.DegreesToRadians(yaw);
+        if (args.Length >= 2 && float.TryParse(args[1], System.Globalization.CultureInfo.InvariantCulture, out var pitch))
+            _world3D.Pitch = MathHelper.DegreesToRadians(pitch);
+
+        shell.WriteLine($"yaw {MathHelper.RadiansToDegrees(_world3D.Yaw):0.#} pitch {MathHelper.RadiansToDegrees(_world3D.Pitch):0.#}");
+    }
+}
+
+[AnyCommand]
+public sealed class Fps3DDumpCommand : IConsoleCommand
+{
+    [Dependency] private IWorld3DManager _world3D = default!;
+
+    public string Command => "fps3d_dump";
+    public string Description => "Log every entity the next 3D frame draws (to the client log).";
+    public string Help => "Usage: fps3d_dump";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        _world3D.DumpNextFrame = true;
+        shell.WriteLine("Dumping next 3D frame to the client log.");
+    }
+}
+
+[AnyCommand]
+public sealed class Fps3DToggleCommand : IConsoleCommand
+{
+    [Dependency] private IConfigurationManager _cfg = default!;
+
+    public string Command => "fps3d";
+    public string Description => "Toggle the first-person 3D world view.";
+    public string Help => "Usage: fps3d [on|off]";
+
+    public void Execute(IConsoleShell shell, string argStr, string[] args)
+    {
+        var value = args.Length switch
+        {
+            0 => !_cfg.GetCVar(CVars.Render3DEnabled),
+            _ => args[0] is "on" or "1" or "true",
+        };
+
+        _cfg.SetCVar(CVars.Render3DEnabled, value);
+        shell.WriteLine($"3D view {(value ? "on — hold Left Alt to use the mouse cursor" : "off")}");
+    }
+}
