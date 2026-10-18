@@ -374,3 +374,31 @@ Common entities now draw real meshes instead of extruded sprites; everything els
 - **Not verified:** the jab animation (the screenshot after the bigger jab change still looked idle; check
   timing and bone signs), gun recoil and hitmarker in screenshots, the jump-over-peel fix, and the
   gameplay suite after these changes.
+
+## Cohesive look, step 1: environment materials (2026-10-18)
+User direction: no extruded sprites or pixel art anywhere; a stylized look using Garry's Mod / Source as the
+**style reference only** (Valve/Facepunch assets can't be copied in; everything is authored new).
+- **`Tools/models3d/materials.py`:** seamless 256 px/m materials from periodic height fields and albedo,
+  lit once (light from top-left plus seam occlusion), with per-cell tone variation and soft grime. Mostly
+  light greys, because the game tints them. Materials:
+  - floors: floor_plates, tiles, checker, wood, carpet, grating, concrete, diamond, tech, rock, grass, snow;
+  - walls and ceiling: wall_panel, wall_reinforced, ceiling_panel;
+  - glass_pane (RGBA).
+- **Engine:** the material atlas packs `Resources/Models3D/Materials/*.png`, 8 per row, with 16 px of wrapped
+  padding (seamless, no mip bleed).
+  - `IWorld3DManager.TileMaterial` (tile ID → material) and `WallMaterial` (entity → material).
+  - Floors and ceilings come from the atlas when mapped. Each floor tile is tinted with the average colour of
+    its own pixel art (`SurfaceTint` keeps the hue and lifts dark colours).
+  - Walls use the library material with the wall's colour; windows use glass_pane.
+  - The ceiling is a soft grey.
+- **Content:** `Fps3DSurfaceSystem` maps by keywords in the tile ID (carpet/wood/grass/snow/rock/concrete/
+  grating/tech/diamond/checker/tiles, default plates) and the wall prototype (reinforced/wood/rock/ice).
+- **Directional windows** (user report "directional glass appears to be broken"): the top-down sprite strip
+  was stretched up a panel, which looked like knee-high glass. They're now full-height thin glass panes on the
+  tile edge, tinted by the window's colour.
+- **Next:**
+  1. Wall fixtures (lights, APCs, alarms, signs, posters).
+  2. A no-pixel fallback for everything without a model: smooth flat-shaded silhouette meshes in palette
+     colours instead of pixel extrusion.
+  3. Item categories.
+  4. Character overhaul.
