@@ -266,7 +266,8 @@ void main()
 
             var mapId = eye.Position.MapId;
             var camFlat = eye.Position.Position;
-            var camPos = new Vector3(camFlat, _render3DEyeHeight);
+            var camHeight = float.IsFinite(_world3D.CameraHeight) ? _world3D.CameraHeight : _render3DEyeHeight;
+            var camPos = new Vector3(camFlat, camHeight);
             var forward = _world3D.Forward;
 
             var size = viewport.RenderTarget.Size;
@@ -595,7 +596,8 @@ void main()
                     sizes += $"{tex.Width}x{tex.Height} ";
             }
 
-            _clydeSawmill.Info($"  {entry.Uid} {proto} {shape} depth={entry.Sprite.DrawDepth} pos={entry.WorldPos} d={(entry.WorldPos - camFlat).Length():0.0} scale={entry.Sprite.Scale} off={entry.Sprite.Offset} tex=[{sizes}]");
+            var pose = _world3D!.PoseProvider?.Invoke(entry.Uid) ?? World3DPose.Identity;
+            _clydeSawmill.Info($"  {entry.Uid} {proto} {shape} depth={entry.Sprite.DrawDepth} pos={entry.WorldPos} d={(entry.WorldPos - camFlat).Length():0.0} scale={entry.Sprite.Scale} off={entry.Sprite.Offset} tex=[{sizes}] z={pose.Z:0.00} tilt={pose.Tilt:0.00}");
         }
 
         private World3DShape ClassifyWorld3D(in SpriteData entry, EntityQuery<PhysicsComponent> physicsQuery)

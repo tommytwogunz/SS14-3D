@@ -309,6 +309,34 @@ namespace Robust.Client.Graphics.Clyde
 
         private static readonly Matrix4x4 LayFlat = Matrix4x4.CreateRotationX(-MathF.PI / 2f);
 
+        /// <summary>
+        ///     Content pose (height, tip-over) as a world-space matrix to append to a placement:
+        ///     tilt about the base point, then lift by the height.
+        /// </summary>
+        private Matrix4x4 PoseMatrix(EntityUid uid, Vector2 basePos, out bool known)
+        {
+            var pose = _world3D!.PoseProvider?.Invoke(uid) ?? World3DPose.Identity;
+            known = pose.Known;
+
+            var m = Matrix4x4.Identity;
+            if (pose.Tilt > 0.001f && pose.TiltDirection.LengthSquared() > 1e-6f)
+            {
+                // Rotating "up" about (−d.y, d.x, 0) moves the top towards d.
+                var d = Vector2.Normalize(pose.TiltDirection);
+                var axis = new Vector3(-d.Y, d.X, 0);
+                m = Matrix4x4.CreateTranslation(new Vector3(-basePos, 0))
+                    * Matrix4x4.CreateFromAxisAngle(axis, pose.Tilt)
+                    * Matrix4x4.CreateTranslation(new Vector3(basePos, 0));
+            }
+
+            if (pose.Z != 0f)
+                m *= Matrix4x4.CreateTranslation(0, 0, pose.Z);
+
+            return m;
+        }
+
+        private float PoseZ(EntityUid uid) => _world3D!.PoseProvider?.Invoke(uid).Z ?? 0f;
+
         private static (EntityUid Grid, Vector2i Tile) TileKey(in SpriteData entry)
         {
             var local = entry.Xform.LocalPosition;
@@ -363,6 +391,7 @@ namespace Robust.Client.Graphics.Clyde
             var placement = Matrix4x4.CreateScale(sprite.Scale.X, sprite.Scale.X, sprite.Scale.Y * _render3DUprightScale)
                             * Matrix4x4.CreateRotationZ((float) entry.WorldRot.Theta)
                             * Matrix4x4.CreateTranslation(new Vector3(entry.WorldPos, 0));
+            placement *= PoseMatrix(entry.Uid, entry.WorldPos, out _);
 
             for (var l = 0; l < sprite.Layers.Count; l++)
             {
@@ -383,6 +412,7 @@ namespace Robust.Client.Graphics.Clyde
             var placement = Matrix4x4.CreateScale(sprite.Scale.X, sprite.Scale.X, sprite.Scale.Y * _render3DUprightScale)
                             * FaceAlong(-fwdFlat)
                             * Matrix4x4.CreateTranslation(new Vector3(entry.WorldPos, 0));
+            placement *= PoseMatrix(entry.Uid, entry.WorldPos, out _);
 
             for (var l = 0; l < sprite.Layers.Count; l++)
             {
@@ -399,7 +429,9 @@ namespace Robust.Client.Graphics.Clyde
         private void EmitItem(in SpriteData entry)
         {
             var sprite = entry.Sprite;
-            var surface = _world3DTableTiles.Contains(TileKey(entry)) ? TableHeight : 0f;
+            // Physics height when content knows it (includes tables); otherwise guess from a table on the tile.
+            var pose = PoseMatrix(entry.Uid, entry.WorldPos, out var known);
+            var surface = known ? 0f : _world3DTableTiles.Contains(TileKey(entry)) ? TableHeight : 0f;
 
             for (var l = 0; l < sprite.Layers.Count; l++)
             {
@@ -416,6 +448,7 @@ namespace Robust.Client.Graphics.Clyde
                                 * LayFlat
                                 * Matrix4x4.CreateRotationZ((float) rot.Theta)
                                 * Matrix4x4.CreateTranslation(new Vector3(entry.WorldPos, surface + thickness / 2f + 0.002f * (l + 1)));
+                placement *= pose;
                 AddModelInstance(frame, thickness, placement, LayerColor(sprite, layer), centerVertically: true);
             }
         }

@@ -56,6 +56,15 @@ public interface IWorld3DManager
     /// <summary>Distance from the camera to the crosshair hit, in metres.</summary>
     float CrosshairDistance { get; }
 
+    /// <summary>
+    ///     Optional hook for content: vertical pose (height, tip-over, tumble) for entities drawn as props, mobs
+    ///     and items. Null or <see cref="World3DPose.Identity"/> = standing on the floor.
+    /// </summary>
+    Func<EntityUid, World3DPose>? PoseProvider { get; set; }
+
+    /// <summary>Camera height above the floor this frame (player height + eye offset). NaN = render3d.eye_height.</summary>
+    float CameraHeight { get; set; }
+
     /// <summary>Debug: log every entity the next 3D frame draws (shape, size, prototype).</summary>
     bool DumpNextFrame { get; set; }
 }
@@ -100,6 +109,9 @@ internal sealed class World3DManager : IWorld3DManager
     public MapCoordinates CrosshairPoint { get; internal set; } = MapCoordinates.Nullspace;
     public float CrosshairDistance { get; internal set; } = float.PositiveInfinity;
 
+    public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
+    public float CameraHeight { get; set; } = float.NaN;
+
     public bool DumpNextFrame { get; set; }
 
     public void AddLook(float deltaYaw, float deltaPitch)
@@ -138,4 +150,22 @@ public enum World3DShape : byte
     Door,
     /// <summary>Like <see cref="Door"/> but thin and see-through (grilles).</summary>
     Fence,
+}
+
+/// <summary>How an entity sits in the vertical axis, from content physics.</summary>
+public struct World3DPose
+{
+    /// <summary>False when content has no physics height for the entity (renderer falls back to its own guesses).</summary>
+    public bool Known;
+
+    /// <summary>Height of the entity's base above the floor, metres.</summary>
+    public float Z;
+
+    /// <summary>Tip angle, radians: the top leans towards <see cref="TiltDirection"/>.</summary>
+    public float Tilt;
+
+    /// <summary>World-space unit direction the top leans towards.</summary>
+    public Vector2 TiltDirection;
+
+    public static readonly World3DPose Identity = new() { TiltDirection = new Vector2(1, 0) };
 }

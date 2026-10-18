@@ -78,12 +78,13 @@ namespace Robust.Client.Graphics.Clyde
                     var half = shape == World3DShape.Mob ? 0.3f : 0.38f;
                     var height = FirstFrameHeight(entry.Sprite) * entry.Sprite.Scale.Y * _render3DUprightScale;
                     AddPick(entry.Uid, entry.WorldPos, rot.RotateVec(new Vector2(half, 0)), rot.RotateVec(new Vector2(0, half)),
-                        0f, MathF.Max(0.3f, height));
+                        PoseZ(entry.Uid), PoseZ(entry.Uid) + MathF.Max(0.3f, height));
                     break;
                 }
                 case World3DShape.Item:
                 {
-                    var surface = _world3DTableTiles.Contains(TileKey(entry)) ? TableHeight : 0f;
+                    var itemPose = _world3D!.PoseProvider?.Invoke(entry.Uid) ?? World3DPose.Identity;
+                    var surface = itemPose.Known ? itemPose.Z : _world3DTableTiles.Contains(TileKey(entry)) ? TableHeight : 0f;
                     var size = FirstFrameSize(entry.Sprite) * entry.Sprite.Scale / 2f;
                     // Items are small; give them a generous minimum so they're easy to grab, like GMod props.
                     AddPick(entry.Uid, entry.WorldPos, new Vector2(MathF.Max(0.18f, size.X), 0), new Vector2(0, MathF.Max(0.18f, size.Y)),
