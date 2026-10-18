@@ -402,3 +402,7 @@ User direction: no extruded sprites or pixel art anywhere; a stylized look using
      colours instead of pixel extrusion.
   3. Item categories.
   4. Character overhaul.
+- **Fix (user report "the apc and other wall technology seem to move around with you"):** mounts on a wall
+  tile picked the open face nearest the camera, so they hopped between sides as you walked. They now use the
+  mount's own rotation (its sprite's bottom points into the room, as in 2D) and pick the open face closest to
+  that. Verified: an APC stays on the same face when viewed head-on and from the side.
