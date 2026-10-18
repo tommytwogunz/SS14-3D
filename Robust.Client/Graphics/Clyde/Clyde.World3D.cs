@@ -272,7 +272,7 @@ void main()
             _world3DPlayer ??= _deps.Resolve<IPlayerManager>();
 
             var mapId = eye.Position.MapId;
-            var camFlat = eye.Position.Position;
+            var camFlat = _world3D.CameraPosition ?? eye.Position.Position;
             var camHeight = float.IsFinite(_world3D.CameraHeight) ? _world3D.CameraHeight : _render3DEyeHeight;
             var camPos = new Vector3(camFlat, camHeight);
             var forward = _world3D.Forward;

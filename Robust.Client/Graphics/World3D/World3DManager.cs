@@ -67,6 +67,12 @@ public interface IWorld3DManager
     /// <summary>Camera height above the floor this frame (player height + eye offset). NaN = render3d.eye_height.</summary>
     float CameraHeight { get; set; }
 
+    /// <summary>
+    ///     Camera floor position this frame (world coordinates on the eye's map), e.g. the smoothed predicted player
+    ///     position. Null = the eye position.
+    /// </summary>
+    System.Numerics.Vector2? CameraPosition { get; set; }
+
     /// <summary>Beams to draw this frame (physics-gun beams). Content clears and refills it every frame.</summary>
     List<World3DBeam> Beams { get; }
 
@@ -119,6 +125,7 @@ internal sealed class World3DManager : IWorld3DManager
 
     public Func<EntityUid, World3DPose>? PoseProvider { get; set; }
     public float CameraHeight { get; set; } = float.NaN;
+    public System.Numerics.Vector2? CameraPosition { get; set; }
 
     public List<World3DBeam> Beams { get; } = new();
     public EntityUid? ViewModelEntity { get; set; }
