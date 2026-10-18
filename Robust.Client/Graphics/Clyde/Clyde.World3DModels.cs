@@ -457,13 +457,9 @@ namespace Robust.Client.Graphics.Clyde
             for (var l = 0; l < sprite.Layers.Count; l++)
             {
                 var layer = sprite.Layers[l];
-                var frame = GetLayerTexture(sprite, layer, entry.WorldRot);
+                var frame = GetTopDownFrame(entry, layer, out var rot);
                 if (frame == null)
                     continue;
-
-                var rot = layer.ActualState is { RsiDirections: not RsiDirectionType.Dir1 } || sprite.NoRotation
-                    ? Angle.Zero
-                    : entry.WorldRot;
                 const float thickness = 0.035f;
                 var placement = Matrix4x4.CreateScale(sprite.Scale.X * layer.Scale.X, 1, sprite.Scale.Y * layer.Scale.Y)
                                 * LayFlat

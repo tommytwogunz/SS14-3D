@@ -6,6 +6,7 @@ using OpenToolkit.Graphics.OpenGL4;
 using Robust.Client.GameObjects;
 using Robust.Client.Graphics.World3D;
 using Robust.Client.Player;
+using Robust.Client.Utility;
 using Robust.Shared;
 using Robust.Shared.GameObjects;
 using Robust.Shared.Graphics;
@@ -132,7 +133,11 @@ out vec4 fragColor;
 
 void main()
 {
-    vec4 tex = texture(uTex, vUV) * vColor * uTint;
+    vec4 texel = texture(uTex, vUV);
+    // Minified sprite edges average with the transparent (black) atlas texels around them; undo that darkening so
+    // tiled floor sprites (rugs, decals) and model edges don't get black seams at a distance.
+    if (texel.a > 0.004) texel.rgb = min(texel.rgb / texel.a, vec3(1.0));
+    vec4 tex = texel * vColor * uTint;
 
     if (uDebugHeight != 0)
     {
@@ -744,6 +749,56 @@ void main()
             }
         }
 
+        /// <summary>
+        ///     Frame and world rotation for a sprite layer laid flat, matching the 2D view exactly. SS14's 2D camera turns
+        ///     with the grid you stand on, so directional states pick their frame from the rotation relative to the
+        ///     grid, and the quad turns by what's left over (Robust's layer draw matrix: rotation minus the frame's
+        ///     direction). Using world rotation instead picks the wrong frames on a rotated station, which split tiled
+        ///     patterns such as the chapel carpet.
+        /// </summary>
+        private static Texture? GetTopDownFrame(in SpriteData entry, SpriteComponent.Layer layer, out Angle worldRot)
+        {
+            // Mirrors SpriteSystem.Render: `angle` is the on-screen angle with the eye turned to the grid.
+            var sprite = entry.Sprite;
+            var gridRot = GridRotation(entry);
+            var angle = (entry.WorldRot - gridRot).Reduced().FlipPositive();
+            var cardinal = !sprite.NoRotation && sprite.SnapCardinals ? angle.RoundToCardinalAngle() : Angle.Zero;
+            worldRot = sprite.NoRotation ? gridRot : entry.WorldRot - cardinal;
+            if (!layer.Drawn)
+                return null;
+
+            if (layer.ActualState is not { } state)
+                return layer.Texture;
+
+            // The quad turns by the direction the angle picks; the frame uses that direction after any override and
+            // the layer's offset (corner-smoothing layers use offsets to pick their corner).
+            var drawDir = SpriteComponent.Layer.GetDirection(state.RsiDirections, angle);
+            if (!sprite.NoRotation && drawDir != RsiDirection.South)
+                worldRot -= RsiDirectionAngle(drawDir);
+
+            var frameDir = sprite.EnableDirectionOverride
+                ? sprite.DirectionOverride.Convert(state.RsiDirections)
+                : drawDir;
+            frameDir = frameDir.OffsetRsiDir(layer.DirOffset);
+            var frames = state.GetFrames(frameDir);
+            if (frames.Length == 0)
+                return null;
+
+            return frames[Math.Clamp(layer.AnimationFrame, 0, frames.Length - 1)];
+        }
+
+        private static Angle RsiDirectionAngle(RsiDirection dir) => (dir switch
+        {
+            RsiDirection.North => Direction.North,
+            RsiDirection.East => Direction.East,
+            RsiDirection.West => Direction.West,
+            RsiDirection.SouthEast => Direction.SouthEast,
+            RsiDirection.SouthWest => Direction.SouthWest,
+            RsiDirection.NorthEast => Direction.NorthEast,
+            RsiDirection.NorthWest => Direction.NorthWest,
+            _ => Direction.South,
+        }).ToAngle();
+
         private void EmitFlat(in SpriteData entry)
         {
             var sprite = entry.Sprite;
@@ -752,18 +807,12 @@ void main()
             for (var l = 0; l < sprite.Layers.Count; l++)
             {
                 var layer = sprite.Layers[l];
-                // Top-down sprites: direction is picked from world rotation exactly like the 2D view with eye rotation 0.
-                var texture = GetLayerTexture(sprite, layer, entry.WorldRot);
+                var texture = GetTopDownFrame(entry, layer, out var rot);
                 if (texture == null)
                     continue;
 
                 var (ct, uvTL, uvBR) = ResolveUV(texture);
                 var half = new Vector2(texture.Width, texture.Height) / PixelsPerMeter3D / 2f * sprite.Scale * layer.Scale;
-
-                // Single-direction states rotate with the entity; directional states already face the right way.
-                var rot = layer.ActualState is { RsiDirections: not RsiDirectionType.Dir1 } || sprite.NoRotation
-                    ? Angle.Zero
-                    : entry.WorldRot;
                 var center = entry.WorldPos + rot.RotateVec(sprite.Offset + layer.Offset);
                 var zl = z + 0.0001f * l;
 
